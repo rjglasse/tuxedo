@@ -228,6 +228,7 @@ class CreateClusterDialog(ModalScreen[dict | None]):
             yield Input(placeholder="View name (e.g., 'By Methodology')", id="new-view-name")
             yield Input(placeholder="Clustering prompt (leave empty for research question)", id="new-view-prompt")
             yield Input(placeholder="Include sections (e.g., 'method,results')", id="new-view-sections")
+            yield Input(placeholder="Batch size (e.g., 10) for large paper sets", id="new-view-batch")
             yield Select(
                 [(label, value) for value, label in MODEL_OPTIONS],
                 value="gpt-5.2",
@@ -246,14 +247,24 @@ class CreateClusterDialog(ModalScreen[dict | None]):
         name = self.query_one("#new-view-name", Input).value.strip()
         prompt = self.query_one("#new-view-prompt", Input).value.strip()
         sections = self.query_one("#new-view-sections", Input).value.strip()
+        batch_input = self.query_one("#new-view-batch", Input).value.strip()
         model_select = self.query_one("#new-view-model", Select)
         model = model_select.value if model_select.value != Select.BLANK else "gpt-5.2"
+
+        # Parse batch size
+        batch_size = None
+        if batch_input:
+            try:
+                batch_size = int(batch_input)
+            except ValueError:
+                pass
 
         self.dismiss({
             "name": name,
             "prompt": prompt or self.default_prompt,
             "sections": sections,
             "model": model,
+            "batch_size": batch_size,
         })
 
     @on(Button.Pressed, "#cancel-btn")
@@ -422,6 +433,7 @@ class ViewSelectionScreen(Screen):
         prompt = config["prompt"]
         sections_input = config["sections"]
         model = config["model"]
+        batch_size = config.get("batch_size")
 
         # Parse section patterns
         section_patterns = None
@@ -432,7 +444,10 @@ class ViewSelectionScreen(Screen):
             views = self.project.get_views()
             name = f"View {len(views) + 1}"
 
-        self.app.call_from_thread(self.notify, f"Clustering with {model}...")
+        if batch_size:
+            self.app.call_from_thread(self.notify, f"Clustering with {model} (batch size: {batch_size})...")
+        else:
+            self.app.call_from_thread(self.notify, f"Clustering with {model}...")
 
         try:
             # Create view and cluster
@@ -444,7 +459,17 @@ class ViewSelectionScreen(Screen):
                 return
 
             clusterer = PaperClusterer(model=model)
-            clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
+
+            # Progress callback for batch mode
+            def progress_callback(batch_num: int, total: int, message: str) -> None:
+                self.app.call_from_thread(self.notify, message)
+
+            clusters = clusterer.cluster_papers(
+                papers, prompt,
+                include_sections=section_patterns,
+                batch_size=batch_size,
+                progress_callback=progress_callback if batch_size else None,
+            )
             self.project.save_clusters(view.id, clusters)
 
             self.app.call_from_thread(self._refresh_list)

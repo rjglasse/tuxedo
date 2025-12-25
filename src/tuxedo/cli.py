@@ -166,11 +166,21 @@ def process():
     default=None,
     help="Comma-separated section patterns to include (e.g., 'method,methodology')",
 )
-def cluster(name: str | None, prompt: str | None, model: str, include_sections: str | None):
+@click.option(
+    "--batch-size", "-b",
+    default=None,
+    type=int,
+    help="Process papers in batches of this size to handle token limits (e.g., 10)",
+)
+def cluster(name: str | None, prompt: str | None, model: str, include_sections: str | None, batch_size: int | None):
     """Cluster papers using LLM.
 
     Creates a new clustering view. You can have multiple views with different
     prompts to organize papers in different ways.
+
+    Use --batch-size for large paper sets to avoid token limits. Themes are
+    developed incrementally: first batch establishes themes, subsequent batches
+    add papers to existing themes or create new ones as needed.
     """
     project = Project.load()
     if not project:
@@ -224,20 +234,48 @@ def cluster(name: str | None, prompt: str | None, model: str, include_sections: 
     console.print(f"Clustering {len(papers)} papers using {model}...")
     if section_patterns:
         console.print(f"Including sections matching: {', '.join(section_patterns)}")
+    if batch_size:
+        num_batches = (len(papers) + batch_size - 1) // batch_size
+        console.print(f"Using batch mode: {batch_size} papers per batch ({num_batches} batches)")
 
     # Create the view
     view = project.create_view(name=name, prompt=prompt)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        progress.add_task(f"Analyzing {len(papers)} papers with {model}...", total=None)
+    clusterer = PaperClusterer(model=model)
 
-        clusterer = PaperClusterer(model=model)
-        clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
+    if batch_size and len(papers) > batch_size:
+        # Batch mode with progress updates
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            num_batches = (len(papers) + batch_size - 1) // batch_size
+            task = progress.add_task("Processing batches...", total=num_batches)
+
+            def progress_callback(batch_num: int, total: int, message: str) -> None:
+                progress.update(task, completed=batch_num - 1, description=message)
+
+            clusters = clusterer.cluster_papers(
+                papers, prompt,
+                include_sections=section_patterns,
+                batch_size=batch_size,
+                progress_callback=progress_callback,
+            )
+            progress.update(task, completed=num_batches)
+    else:
+        # Standard single-pass mode
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            progress.add_task(f"Analyzing {len(papers)} papers with {model}...", total=None)
+            clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
 
     project.save_clusters(view.id, clusters)
 

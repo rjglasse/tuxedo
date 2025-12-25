@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from typing import Callable
 
 from openai import OpenAI
 
@@ -39,6 +40,36 @@ Important:
 - Aim for 3-7 top-level clusters depending on paper count
 - Only create subclusters if there's meaningful differentiation"""
 
+BATCH_CLUSTER_PROMPT = """You are a systematic literature review assistant. Your task is to assign new papers to existing themes OR create new themes if papers don't fit.
+
+You are given:
+1. A research question
+2. Existing themes with their descriptions
+3. New papers to organize
+
+For each paper, either:
+- Assign it to an existing theme that fits well
+- Create a new theme if it represents a genuinely different topic
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "clusters": [
+    {
+      "name": "Theme Name",
+      "description": "Brief description of the theme",
+      "paper_ids": ["id1", "id2"],
+      "subclusters": []
+    }
+  ]
+}
+
+Important:
+- Include ALL existing themes, even if no new papers were added to them
+- paper_ids should ONLY contain papers from the new batch (not previous papers)
+- You may create new themes if papers don't fit existing ones
+- You may refine theme names/descriptions as patterns become clearer
+- Keep theme names suitable as section headings"""
+
 
 class PaperClusterer:
     """Cluster papers using OpenAI."""
@@ -52,6 +83,8 @@ class PaperClusterer:
         papers: list[Paper],
         research_question: str,
         include_sections: list[str] | None = None,
+        batch_size: int | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[Cluster]:
         """Cluster papers based on research question.
 
@@ -60,11 +93,46 @@ class PaperClusterer:
             research_question: The research question/prompt for clustering
             include_sections: Optional list of section name patterns to include
                              (e.g., ["method", "methodology"] to include method sections)
+            batch_size: If set, process papers in batches to handle token limits.
+                       Themes are developed incrementally across batches.
+            progress_callback: Optional callback(batch_num, total_batches, message) for progress
         """
         if not papers:
             return []
 
-        # Build paper summaries for the prompt
+        # If batch_size is set and we have more papers than the batch size, use iterative mode
+        if batch_size and len(papers) > batch_size:
+            return self._cluster_papers_iterative(
+                papers, research_question, include_sections, batch_size, progress_callback
+            )
+
+        # Standard single-pass clustering
+        paper_summaries = self._build_paper_summaries(papers, include_sections)
+
+        user_prompt = f"""Research Question: {research_question}
+
+Papers to organize:
+{json.dumps(paper_summaries, indent=2)}
+
+Create a hierarchical structure for these {len(papers)} papers that would support writing a literature review addressing the research question."""
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        return self._parse_clusters(result.get("clusters", []))
+
+    def _build_paper_summaries(
+        self, papers: list[Paper], include_sections: list[str] | None = None
+    ) -> list[dict]:
+        """Build paper summaries for the prompt."""
         paper_summaries = []
         for paper in papers:
             summary = {
@@ -89,26 +157,148 @@ class PaperClusterer:
                     summary["sections"] = matched_sections
 
             paper_summaries.append(summary)
+        return paper_summaries
 
-        user_prompt = f"""Research Question: {research_question}
+    def _cluster_papers_iterative(
+        self,
+        papers: list[Paper],
+        research_question: str,
+        include_sections: list[str] | None,
+        batch_size: int,
+        progress_callback: Callable[[int, int, str], None] | None,
+    ) -> list[Cluster]:
+        """Cluster papers iteratively in batches.
+
+        First batch establishes initial themes, subsequent batches add papers
+        to existing themes or create new ones as needed.
+        """
+        # Split papers into batches
+        batches = [papers[i : i + batch_size] for i in range(0, len(papers), batch_size)]
+        total_batches = len(batches)
+
+        # Track accumulated paper_ids per theme (by name)
+        theme_papers: dict[str, list[str]] = {}
+        theme_descriptions: dict[str, str] = {}
+
+        for batch_num, batch in enumerate(batches, 1):
+            if progress_callback:
+                progress_callback(batch_num, total_batches, f"Processing batch {batch_num}/{total_batches}")
+
+            paper_summaries = self._build_paper_summaries(batch, include_sections)
+
+            if batch_num == 1:
+                # First batch: use standard clustering to establish themes
+                user_prompt = f"""Research Question: {research_question}
 
 Papers to organize:
 {json.dumps(paper_summaries, indent=2)}
 
-Create a hierarchical structure for these {len(papers)} papers that would support writing a literature review addressing the research question."""
+Create a hierarchical structure for these {len(batch)} papers that would support writing a literature review addressing the research question."""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                )
 
-        result = json.loads(response.choices[0].message.content)
-        return self._parse_clusters(result.get("clusters", []))
+                result = json.loads(response.choices[0].message.content)
+                clusters = self._parse_clusters(result.get("clusters", []))
+
+                # Initialize theme tracking from first batch
+                for cluster in clusters:
+                    theme_papers[cluster.name] = list(cluster.paper_ids)
+                    theme_descriptions[cluster.name] = cluster.description
+                    for sub in cluster.subclusters:
+                        sub_name = f"{cluster.name} > {sub.name}"
+                        theme_papers[sub_name] = list(sub.paper_ids)
+                        theme_descriptions[sub_name] = sub.description
+
+            else:
+                # Subsequent batches: assign to existing themes or create new ones
+                existing_themes = [
+                    {"name": name, "description": desc}
+                    for name, desc in theme_descriptions.items()
+                ]
+
+                user_prompt = f"""Research Question: {research_question}
+
+Existing themes:
+{json.dumps(existing_themes, indent=2)}
+
+New papers to organize:
+{json.dumps(paper_summaries, indent=2)}
+
+Assign each paper to the most appropriate existing theme, or create new themes if papers don't fit existing ones."""
+
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": BATCH_CLUSTER_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                )
+
+                result = json.loads(response.choices[0].message.content)
+                batch_clusters = result.get("clusters", [])
+
+                # Merge batch results into accumulated themes
+                for cluster in batch_clusters:
+                    name = cluster.get("name", "")
+                    desc = cluster.get("description", "")
+                    pids = cluster.get("paper_ids", [])
+
+                    if name in theme_papers:
+                        # Add to existing theme
+                        theme_papers[name].extend(pids)
+                        # Update description if refined
+                        if desc:
+                            theme_descriptions[name] = desc
+                    else:
+                        # New theme created
+                        theme_papers[name] = list(pids)
+                        theme_descriptions[name] = desc
+
+        # Build final cluster structure
+        final_clusters = []
+        for name, pids in theme_papers.items():
+            if " > " in name:
+                # This is a subcluster, will be handled by parent
+                continue
+            final_clusters.append(
+                Cluster(
+                    id=str(uuid.uuid4())[:8],
+                    name=name,
+                    description=theme_descriptions.get(name, ""),
+                    paper_ids=pids,
+                    subclusters=[],
+                )
+            )
+
+        # Add subclusters
+        for name, pids in theme_papers.items():
+            if " > " not in name:
+                continue
+            parent_name, sub_name = name.split(" > ", 1)
+            for cluster in final_clusters:
+                if cluster.name == parent_name:
+                    cluster.subclusters.append(
+                        Cluster(
+                            id=str(uuid.uuid4())[:8],
+                            name=sub_name,
+                            description=theme_descriptions.get(name, ""),
+                            paper_ids=pids,
+                            subclusters=[],
+                        )
+                    )
+                    break
+
+        return final_clusters
 
     def _parse_clusters(self, raw_clusters: list[dict]) -> list[Cluster]:
         """Parse raw cluster dicts into Cluster models."""

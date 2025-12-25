@@ -1,0 +1,280 @@
+"""Grobid client for PDF extraction."""
+
+import hashlib
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from pathlib import Path
+
+import httpx
+
+from tuxedo.models import Author, Paper
+
+# TEI namespace
+TEI_NS = {"tei": "http://www.tei-c.org/ns/1.0"}
+
+
+class GrobidError(Exception):
+    """Base exception for Grobid-related errors."""
+
+    pass
+
+
+class GrobidConnectionError(GrobidError):
+    """Raised when cannot connect to Grobid service."""
+
+    def __init__(self, url: str, cause: Exception | None = None):
+        self.url = url
+        self.cause = cause
+        message = f"Cannot connect to Grobid at {url}"
+        if cause:
+            message += f": {cause}"
+        super().__init__(message)
+
+
+class GrobidProcessingError(GrobidError):
+    """Raised when Grobid fails to process a PDF."""
+
+    def __init__(
+        self,
+        pdf_path: Path,
+        status_code: int | None = None,
+        response_body: str | None = None,
+        cause: Exception | None = None,
+    ):
+        self.pdf_path = pdf_path
+        self.status_code = status_code
+        self.response_body = response_body
+        self.cause = cause
+
+        if status_code:
+            message = f"Failed to process {pdf_path.name}: HTTP {status_code}"
+            if response_body:
+                # Truncate long responses
+                body_preview = response_body[:200] + "..." if len(response_body) > 200 else response_body
+                message += f" - {body_preview}"
+        elif cause:
+            message = f"Failed to process {pdf_path.name}: {cause}"
+        else:
+            message = f"Failed to process {pdf_path.name}"
+
+        super().__init__(message)
+
+
+class GrobidParsingError(GrobidError):
+    """Raised when TEI XML parsing fails."""
+
+    def __init__(self, pdf_path: Path, cause: Exception | None = None):
+        self.pdf_path = pdf_path
+        self.cause = cause
+        message = f"Failed to parse Grobid output for {pdf_path.name}"
+        if cause:
+            message += f": {cause}"
+        super().__init__(message)
+
+
+@dataclass
+class ProcessingResult:
+    """Result of processing a single PDF."""
+
+    pdf_path: Path
+    paper: Paper | None = None
+    error: GrobidError | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.paper is not None
+
+
+class GrobidClient:
+    """Client for Grobid PDF extraction service."""
+
+    def __init__(self, base_url: str = "http://localhost:8070"):
+        self.base_url = base_url.rstrip("/")
+        self.client = httpx.Client(timeout=120.0)
+
+    def is_alive(self) -> bool:
+        """Check if Grobid service is available."""
+        try:
+            resp = self.client.get(f"{self.base_url}/api/isalive")
+            return resp.status_code == 200
+        except httpx.RequestError:
+            return False
+
+    def check_connection(self) -> None:
+        """Check connection to Grobid and raise detailed error if unavailable."""
+        try:
+            resp = self.client.get(f"{self.base_url}/api/isalive")
+            if resp.status_code != 200:
+                raise GrobidConnectionError(
+                    self.base_url,
+                    cause=Exception(f"Service returned HTTP {resp.status_code}"),
+                )
+        except httpx.RequestError as e:
+            raise GrobidConnectionError(self.base_url, cause=e) from e
+
+    def process_pdf(self, pdf_path: Path) -> Paper:
+        """Process a PDF and extract structured content.
+
+        Raises:
+            GrobidProcessingError: If Grobid fails to process the PDF
+            GrobidParsingError: If the TEI XML response cannot be parsed
+            GrobidConnectionError: If cannot connect to Grobid
+        """
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_content = f.read()
+        except OSError as e:
+            raise GrobidProcessingError(pdf_path, cause=e) from e
+
+        # Generate stable ID from file content
+        paper_id = hashlib.sha256(pdf_content).hexdigest()[:12]
+
+        # Call Grobid fulltext endpoint
+        try:
+            resp = self.client.post(
+                f"{self.base_url}/api/processFulltextDocument",
+                files={"input": (pdf_path.name, pdf_content, "application/pdf")},
+                data={"consolidateHeader": "1", "consolidateCitations": "0"},
+            )
+        except httpx.RequestError as e:
+            raise GrobidConnectionError(self.base_url, cause=e) from e
+
+        if resp.status_code != 200:
+            raise GrobidProcessingError(
+                pdf_path,
+                status_code=resp.status_code,
+                response_body=resp.text,
+            )
+
+        try:
+            return self._parse_tei(resp.text, paper_id, pdf_path)
+        except ET.ParseError as e:
+            raise GrobidParsingError(pdf_path, cause=e) from e
+
+    def _parse_tei(self, tei_xml: str, paper_id: str, pdf_path: Path) -> Paper:
+        """Parse TEI XML into Paper model."""
+        root = ET.fromstring(tei_xml)
+
+        # Extract title
+        title_elem = root.find(".//tei:titleStmt/tei:title", TEI_NS)
+        title = title_elem.text.strip() if title_elem is not None and title_elem.text else pdf_path.stem
+
+        # Extract authors
+        authors = []
+        for author_elem in root.findall(".//tei:sourceDesc//tei:author", TEI_NS):
+            persname = author_elem.find("tei:persName", TEI_NS)
+            if persname is not None:
+                forename = persname.find("tei:forename", TEI_NS)
+                surname = persname.find("tei:surname", TEI_NS)
+                name_parts = []
+                if forename is not None and forename.text:
+                    name_parts.append(forename.text)
+                if surname is not None and surname.text:
+                    name_parts.append(surname.text)
+                if name_parts:
+                    affil_elem = author_elem.find(".//tei:affiliation/tei:orgName", TEI_NS)
+                    affil = affil_elem.text if affil_elem is not None and affil_elem.text else None
+                    authors.append(Author(name=" ".join(name_parts), affiliation=affil))
+
+        # Extract abstract
+        abstract_elem = root.find(".//tei:profileDesc/tei:abstract", TEI_NS)
+        abstract = None
+        if abstract_elem is not None:
+            abstract_parts = []
+            for p in abstract_elem.findall(".//tei:p", TEI_NS):
+                if p.text:
+                    abstract_parts.append(p.text.strip())
+            # Also try direct text content
+            if not abstract_parts:
+                abstract_text = "".join(abstract_elem.itertext()).strip()
+                if abstract_text:
+                    abstract_parts.append(abstract_text)
+            abstract = " ".join(abstract_parts) if abstract_parts else None
+
+        # Extract year
+        year = None
+        date_elem = root.find(".//tei:sourceDesc//tei:date[@when]", TEI_NS)
+        if date_elem is not None:
+            when = date_elem.get("when", "")
+            if when and len(when) >= 4:
+                try:
+                    year = int(when[:4])
+                except ValueError:
+                    pass
+
+        # Extract DOI
+        doi = None
+        for idno in root.findall(".//tei:sourceDesc//tei:idno[@type='DOI']", TEI_NS):
+            if idno.text:
+                doi = idno.text.strip()
+                break
+
+        # Extract sections
+        sections = {}
+        body = root.find(".//tei:body", TEI_NS)
+        if body is not None:
+            for div in body.findall("tei:div", TEI_NS):
+                head = div.find("tei:head", TEI_NS)
+                if head is not None and head.text:
+                    section_name = head.text.strip().lower()
+                    section_text = []
+                    for p in div.findall("tei:p", TEI_NS):
+                        text = "".join(p.itertext()).strip()
+                        if text:
+                            section_text.append(text)
+                    if section_text:
+                        sections[section_name] = " ".join(section_text)
+
+        # Extract keywords
+        keywords = []
+        for term in root.findall(".//tei:profileDesc//tei:keywords//tei:term", TEI_NS):
+            if term.text:
+                keywords.append(term.text.strip())
+
+        return Paper(
+            id=paper_id,
+            pdf_path=pdf_path,
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            year=year,
+            doi=doi,
+            sections=sections,
+            keywords=keywords,
+        )
+
+    def process_directory(self, pdf_dir: Path) -> list[ProcessingResult]:
+        """Process all PDFs in a directory.
+
+        Returns a list of ProcessingResult objects, each containing either
+        a Paper on success or a GrobidError on failure. This allows callers
+        to handle errors appropriately rather than silently skipping failures.
+        """
+        results = []
+        pdf_files = list(pdf_dir.glob("*.pdf"))
+        for pdf_path in pdf_files:
+            try:
+                paper = self.process_pdf(pdf_path)
+                results.append(ProcessingResult(pdf_path=pdf_path, paper=paper))
+            except GrobidError as e:
+                results.append(ProcessingResult(pdf_path=pdf_path, error=e))
+        return results
+
+    def process_directory_papers(self, pdf_dir: Path) -> list[Paper]:
+        """Process all PDFs in a directory, returning only successful papers.
+
+        This is a convenience method that filters out failed results.
+        Use process_directory() if you need to handle individual failures.
+        """
+        results = self.process_directory(pdf_dir)
+        return [r.paper for r in results if r.paper is not None]
+
+    def close(self):
+        """Close the HTTP client."""
+        self.client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()

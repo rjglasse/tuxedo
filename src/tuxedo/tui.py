@@ -174,6 +174,96 @@ class ConfirmDialog(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class CreateClusterDialog(ModalScreen[dict | None]):
+    """A modal dialog for creating a new cluster view."""
+
+    CSS = """
+    CreateClusterDialog {
+        align: center middle;
+    }
+
+    #create-dialog {
+        width: 80;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #create-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #create-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #create-dialog Input {
+        margin-bottom: 1;
+    }
+
+    #create-dialog Select {
+        margin-bottom: 1;
+        width: 100%;
+    }
+
+    #create-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #create-dialog Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, default_prompt: str = ""):
+        super().__init__()
+        self.default_prompt = default_prompt
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="create-dialog"):
+            yield Label("Create New Clustering View", classes="title")
+            yield Label("Different prompts organize papers in different ways", classes="hint")
+            yield Input(placeholder="View name (e.g., 'By Methodology')", id="new-view-name")
+            yield Input(placeholder="Clustering prompt (leave empty for research question)", id="new-view-prompt")
+            yield Input(placeholder="Include sections (e.g., 'method,results')", id="new-view-sections")
+            yield Select(
+                [(label, value) for value, label in MODEL_OPTIONS],
+                value="gpt-5.2",
+                id="new-view-model",
+                prompt="Select model",
+            )
+            with Horizontal(classes="buttons"):
+                yield Button("Create", variant="primary", id="create-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#new-view-name", Input).focus()
+
+    @on(Button.Pressed, "#create-btn")
+    def on_create(self) -> None:
+        name = self.query_one("#new-view-name", Input).value.strip()
+        prompt = self.query_one("#new-view-prompt", Input).value.strip()
+        sections = self.query_one("#new-view-sections", Input).value.strip()
+        model_select = self.query_one("#new-view-model", Select)
+        model = model_select.value if model_select.value != Select.BLANK else "gpt-5.2"
+
+        self.dismiss({
+            "name": name,
+            "prompt": prompt or self.default_prompt,
+            "sections": sections,
+            "model": model,
+        })
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 # ============================================================================
 # View Selection Screen
 # ============================================================================
@@ -209,7 +299,6 @@ class ViewSelectionScreen(Screen):
         Binding("n", "new_view", "New", priority=True),
         Binding("enter", "select", "Select"),
         Binding("d", "delete", "Delete", priority=True),
-        Binding("escape", "cancel_form", "Cancel", show=False),
     ]
 
     CSS = """
@@ -255,39 +344,6 @@ class ViewSelectionScreen(Screen):
     ListView > ListItem.--highlight {
         background: $surface-lighten-2;
     }
-
-    #new-view-form {
-        display: none;
-        padding: 1;
-        margin-top: 1;
-    }
-
-    #new-view-form.visible {
-        display: block;
-    }
-
-    #new-view-form .form-label {
-        margin-bottom: 1;
-        text-style: bold;
-    }
-
-    #new-view-form Input {
-        margin-bottom: 1;
-    }
-
-    #new-view-form Select {
-        margin-bottom: 1;
-        width: 100%;
-    }
-
-    #new-view-form .buttons {
-        margin-top: 1;
-    }
-
-    #new-view-form .hint {
-        color: $text-muted;
-        margin-bottom: 1;
-    }
     """
 
     def __init__(self, project: Project):
@@ -301,23 +357,10 @@ class ViewSelectionScreen(Screen):
             paper_count = self.project.paper_count()
             yield Static(f"[dim]{paper_count} papers in project[/dim]", classes="subtitle")
             yield ListView(id="view-list")
-            with Vertical(id="new-view-form"):
-                yield Label("Create New Clustering View", classes="form-label")
-                yield Label("Different prompts organize papers in different ways", classes="hint")
-                yield Input(placeholder="View name (e.g., 'By Methodology')", id="new-view-name")
-                yield Input(placeholder="Clustering prompt (leave empty for research question)", id="new-view-prompt")
-                yield Select(
-                    [(label, value) for value, label in MODEL_OPTIONS],
-                    value="gpt-5.2",
-                    id="new-view-model",
-                    prompt="Select model",
-                )
-                with Horizontal(classes="buttons"):
-                    yield Button("Create", variant="primary", id="create-btn")
-                    yield Button("Cancel", id="cancel-btn")
 
     def on_mount(self) -> None:
         self._refresh_list()
+        self.query_one("#view-list", ListView).focus()
 
     def _refresh_list(self) -> None:
         """Refresh the view list."""
@@ -331,49 +374,24 @@ class ViewSelectionScreen(Screen):
 
         list_view.append(NewViewItem())
 
-        # Focus list if no views
-        if not views:
-            list_view.focus()
-
     @on(ListView.Selected)
     def on_list_selected(self, event: ListView.Selected) -> None:
         """Handle list item selection."""
         if isinstance(event.item, NewViewItem):
-            self._show_new_view_form()
+            self.action_new_view()
         elif isinstance(event.item, ViewListItem):
             self.app.push_screen(ClusterScreen(self.project, event.item.view))
 
-    def _show_new_view_form(self) -> None:
-        """Show the new view form."""
-        form = self.query_one("#new-view-form")
-        form.add_class("visible")
-        self.query_one("#new-view-name", Input).focus()
-
-    def _hide_new_view_form(self) -> None:
-        """Hide the new view form."""
-        form = self.query_one("#new-view-form")
-        form.remove_class("visible")
-        self.query_one("#new-view-name", Input).value = ""
-        self.query_one("#new-view-prompt", Input).value = ""
-        self.query_one("#new-view-model", Select).value = "gpt-5.2"
-        self.query_one("#view-list", ListView).focus()
-
-    def action_cancel_form(self) -> None:
-        """Cancel the new view form if visible."""
-        form = self.query_one("#new-view-form")
-        if "visible" in form.classes:
-            self._hide_new_view_form()
-
-    @on(Button.Pressed, "#cancel-btn")
-    def on_cancel(self) -> None:
-        self._hide_new_view_form()
-
-    @on(Button.Pressed, "#create-btn")
-    def on_create(self) -> None:
-        self._create_new_view()
-
     def action_new_view(self) -> None:
-        self._show_new_view_form()
+        """Show the create cluster dialog."""
+        def handle_create(result: dict | None) -> None:
+            if result:
+                self._create_new_view(result)
+
+        self.app.push_screen(
+            CreateClusterDialog(self.project.config.research_question),
+            handle_create,
+        )
 
     def action_quit(self) -> None:
         self.app.exit()
@@ -398,19 +416,21 @@ class ViewSelectionScreen(Screen):
             )
 
     @work(thread=True)
-    def _create_new_view(self) -> None:
+    def _create_new_view(self, config: dict) -> None:
         """Create a new clustering view."""
-        name = self.query_one("#new-view-name", Input).value.strip()
-        prompt = self.query_one("#new-view-prompt", Input).value.strip()
-        model_select = self.query_one("#new-view-model", Select)
-        model = model_select.value if model_select.value != Select.BLANK else "gpt-5.2"
+        name = config["name"]
+        prompt = config["prompt"]
+        sections_input = config["sections"]
+        model = config["model"]
+
+        # Parse section patterns
+        section_patterns = None
+        if sections_input:
+            section_patterns = [s.strip() for s in sections_input.split(",") if s.strip()]
 
         if not name:
             views = self.project.get_views()
             name = f"View {len(views) + 1}"
-
-        if not prompt:
-            prompt = self.project.config.research_question
 
         self.app.call_from_thread(self.notify, f"Clustering with {model}...")
 
@@ -424,10 +444,9 @@ class ViewSelectionScreen(Screen):
                 return
 
             clusterer = PaperClusterer(model=model)
-            clusters = clusterer.cluster_papers(papers, prompt)
+            clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
             self.project.save_clusters(view.id, clusters)
 
-            self.app.call_from_thread(self._hide_new_view_form)
             self.app.call_from_thread(self._refresh_list)
             self.app.call_from_thread(self.notify, f"Created '{name}' with {len(clusters)} clusters")
         except Exception as e:
@@ -561,11 +580,11 @@ class ClusterTree(Tree):
         for cluster in self.clusters:
             self._add_cluster_node(self.root, cluster)
 
-        # Add uncategorized papers
-        uncategorized = [
-            p for p in self.all_papers
-            if p.id not in used_paper_ids and self._matches_filter(p)
-        ]
+        # Add uncategorized papers (sorted alphabetically)
+        uncategorized = sorted(
+            [p for p in self.all_papers if p.id not in used_paper_ids and self._matches_filter(p)],
+            key=lambda p: p.title.lower()
+        )
         if uncategorized:
             node = self.root.add(f"[bold italic]Uncategorized[/bold italic] ({len(uncategorized)})", data={"type": "uncategorized"})
             for paper in uncategorized:
@@ -577,6 +596,44 @@ class ClusterTree(Tree):
         for cluster in clusters:
             used.update(cluster.paper_ids)
             self._collect_used_papers(cluster.subclusters, used)
+
+    def get_expanded_state(self) -> set[str]:
+        """Get the set of expanded cluster IDs."""
+        expanded = set()
+        self._collect_expanded(self.root, expanded)
+        return expanded
+
+    def _collect_expanded(self, node: TreeNode, expanded: set[str]) -> None:
+        """Recursively collect expanded cluster IDs."""
+        if node.is_expanded and node.data:
+            if node.data.get("type") == "cluster":
+                cluster = node.data.get("cluster")
+                if cluster:
+                    expanded.add(cluster.id)
+            elif node.data.get("type") == "uncategorized":
+                expanded.add("__uncategorized__")
+        for child in node.children:
+            self._collect_expanded(child, expanded)
+
+    def restore_expanded_state(self, expanded: set[str]) -> None:
+        """Restore expanded state from a set of cluster IDs."""
+        self._restore_expanded(self.root, expanded)
+
+    def _restore_expanded(self, node: TreeNode, expanded: set[str]) -> None:
+        """Recursively restore expanded state."""
+        if node.data:
+            cluster_id = None
+            if node.data.get("type") == "cluster":
+                cluster = node.data.get("cluster")
+                if cluster:
+                    cluster_id = cluster.id
+            elif node.data.get("type") == "uncategorized":
+                cluster_id = "__uncategorized__"
+
+            if cluster_id and cluster_id in expanded:
+                node.expand()
+        for child in node.children:
+            self._restore_expanded(child, expanded)
 
     def _matches_filter(self, paper: Paper) -> bool:
         """Check if a paper matches the current filter."""
@@ -612,9 +669,12 @@ class ClusterTree(Tree):
 
         node = parent.add(f"[bold]{cluster.name}[/bold] ({total})", data={"type": "cluster", "cluster": cluster})
 
-        for paper_id in matching_papers:
-            paper = self._paper_map[paper_id]
-            # Show year in tree if available, dim paper titles for contrast
+        # Sort papers alphabetically by title
+        sorted_papers = sorted(
+            [self._paper_map[pid] for pid in matching_papers],
+            key=lambda p: p.title.lower()
+        )
+        for paper in sorted_papers:
             year_suffix = f" [{paper.year}]" if paper.year else ""
             node.add_leaf(f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper})
 
@@ -692,7 +752,7 @@ class ClusterScreen(Screen):
 
     ClusterScreen .view-header {
         color: $text-muted;
-        padding: 0 2;
+        padding: 1 2;
         dock: top;
     }
 
@@ -742,6 +802,11 @@ class ClusterScreen(Screen):
                 with Container(id="paper-detail-wrapper") as self._detail:
                     yield PaperDetail()
         yield Static(f"{len(self.papers)} papers | {len(self.clusters)} clusters | Press / to search", classes="status-bar")
+
+    def on_mount(self) -> None:
+        """Focus the tree when screen opens."""
+        if self._tree:
+            self._tree.focus()
 
     @on(Tree.NodeHighlighted)
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
@@ -831,12 +896,13 @@ class ClusterScreen(Screen):
         def handle_move(target_cluster_id: str | None) -> None:
             if target_cluster_id and paper:
                 self.project.move_paper_to_cluster(self.view.id, paper.id, target_cluster_id)
-                # Refresh clusters and tree
+                # Refresh clusters and tree, preserving expanded state
                 self.clusters = self.project.get_clusters(self.view.id)
                 if self._tree:
+                    expanded = self._tree.get_expanded_state()
                     self._tree.clusters = self.clusters
                     self._tree._build_tree()
-                    self._tree.root.expand()
+                    self._tree.restore_expanded_state(expanded)
                 self.notify(f"Moved paper to cluster")
 
         self.app.push_screen(

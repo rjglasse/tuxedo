@@ -161,7 +161,12 @@ def process():
 @click.option("--name", "-n", default=None, help="Name for this clustering view")
 @click.option("--prompt", "-p", default=None, help="Custom prompt for clustering (defaults to research question)")
 @click.option("--model", default="gpt-5.2", help="OpenAI model to use")
-def cluster(name: str | None, prompt: str | None, model: str):
+@click.option(
+    "--include-sections", "-s",
+    default=None,
+    help="Comma-separated section patterns to include (e.g., 'method,methodology')",
+)
+def cluster(name: str | None, prompt: str | None, model: str, include_sections: str | None):
     """Cluster papers using LLM.
 
     Creates a new clustering view. You can have multiple views with different
@@ -210,8 +215,15 @@ def cluster(name: str | None, prompt: str | None, model: str):
     if not prompt:
         prompt = project.config.research_question
 
+    # Parse section patterns
+    section_patterns = None
+    if include_sections:
+        section_patterns = [s.strip() for s in include_sections.split(",") if s.strip()]
+
     console.print(f"Creating view '[bold]{name}[/bold]'...")
     console.print(f"Clustering {len(papers)} papers using {model}...")
+    if section_patterns:
+        console.print(f"Including sections matching: {', '.join(section_patterns)}")
 
     # Create the view
     view = project.create_view(name=name, prompt=prompt)
@@ -225,7 +237,7 @@ def cluster(name: str | None, prompt: str | None, model: str):
         progress.add_task(f"Analyzing {len(papers)} papers with {model}...", total=None)
 
         clusterer = PaperClusterer(model=model)
-        clusters = clusterer.cluster_papers(papers, prompt)
+        clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
 
     project.save_clusters(view.id, clusters)
 

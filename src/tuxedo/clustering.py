@@ -47,8 +47,20 @@ class PaperClusterer:
         self.client = OpenAI(api_key=api_key)  # Uses OPENAI_API_KEY env var if None
         self.model = model
 
-    def cluster_papers(self, papers: list[Paper], research_question: str) -> list[Cluster]:
-        """Cluster papers based on research question."""
+    def cluster_papers(
+        self,
+        papers: list[Paper],
+        research_question: str,
+        include_sections: list[str] | None = None,
+    ) -> list[Cluster]:
+        """Cluster papers based on research question.
+
+        Args:
+            papers: List of papers to cluster
+            research_question: The research question/prompt for clustering
+            include_sections: Optional list of section name patterns to include
+                             (e.g., ["method", "methodology"] to include method sections)
+        """
         if not papers:
             return []
 
@@ -62,6 +74,20 @@ class PaperClusterer:
                 "abstract": paper.abstract or "No abstract available",
                 "keywords": paper.keywords[:5] if paper.keywords else [],
             }
+
+            # Include matching sections if requested
+            if include_sections and paper.sections:
+                matched_sections = {}
+                for section_name, content in paper.sections.items():
+                    section_lower = section_name.lower()
+                    for pattern in include_sections:
+                        if pattern.lower() in section_lower:
+                            # Truncate long sections to avoid token limits
+                            matched_sections[section_name] = content[:2000]
+                            break
+                if matched_sections:
+                    summary["sections"] = matched_sections
+
             paper_summaries.append(summary)
 
         user_prompt = f"""Research Question: {research_question}

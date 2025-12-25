@@ -16,6 +16,12 @@ dependencies = [
 [project.scripts]
 tuxedo = "tuxedo.cli:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-httpx>=0.30.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -2,6 +2,18 @@
 
 TUI app for organizing systematic literature review papers using LLMs.
 
+<img width="1777" height="618" alt="Screenshot 2025-12-25 at 18 55 50" src="https://github.com/user-attachments/assets/fbccfd09-ecae-4a3d-bd55-1a4ca0070998" />
+
+## How it works
+
+We begin with a collection of papers that have been gathered through a data-driven or snowballing systematic literature review.
+- Create a project with a guiding research question
+- Process all the PDFs to extract metadata and content
+- Cluster papers based on the research question
+- View proposed clusters and optionally recategorise papers
+- Create new cluster views (e.g. type of experiement, method, etc)
+- Export to LaTeX / BiBTeX
+
 ## Quick Start
 
 ```bash

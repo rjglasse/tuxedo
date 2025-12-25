@@ -1,6 +1,6 @@
 # Tuxedo
 
-TUI app for organizing systematic literature review papers using LLMs.
+A simple app for organizing systematic literature review papers using LLMs.
 
 <img width="1904" height="824" alt="Screenshot 2025-12-26 at 00 27 37" src="https://github.com/user-attachments/assets/11bfd720-88f2-4d35-bcae-c249accdc6ed" />
 

@@ -39,7 +39,7 @@ def main():
 @main.command()
 @click.argument("source_pdfs", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("-q", "--question", prompt="Research question", help="The research question guiding the review")
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None, help="Project directory (defaults to current directory)")
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None, help="Project directory (defaults to parent of SOURCE_PDFS)")
 @click.option("--grobid-url", default="http://localhost:8070", help="Grobid service URL")
 @click.option("--name", default=None, help="Project name (defaults to directory name)")
 def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str, name: str | None):
@@ -47,7 +47,7 @@ def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str,
 
     SOURCE_PDFS is the directory containing PDF files to import.
     """
-    project_dir = output or Path.cwd()
+    project_dir = output or source_pdfs.parent
     project_name = name or project_dir.name
 
     # Check for existing project
@@ -160,7 +160,7 @@ def process():
 @main.command()
 @click.option("--name", "-n", default=None, help="Name for this clustering view")
 @click.option("--prompt", "-p", default=None, help="Custom prompt for clustering (defaults to research question)")
-@click.option("--model", default="gpt-4o-mini", help="OpenAI model to use")
+@click.option("--model", default="gpt-5.2", help="OpenAI model to use")
 def cluster(name: str | None, prompt: str | None, model: str):
     """Cluster papers using LLM.
 
@@ -307,7 +307,7 @@ def delete_view(view_id: str, force: bool):
     "-f",
     "--format",
     "output_format",
-    type=click.Choice(["json", "markdown", "md", "bibtex", "bib"]),
+    type=click.Choice(["json", "markdown", "md", "bibtex", "bib", "latex", "tex"]),
     default="markdown",
     help="Output format (default: markdown)",
 )
@@ -321,6 +321,7 @@ def export(view_id: str, output_format: str, output: Path | None):
       - markdown/md: Hierarchical outline for writing
       - json: Structured data for processing
       - bibtex/bib: Bibliography file for LaTeX
+      - latex/tex: LaTeX skeleton with sections and citations
     """
     import json
 
@@ -342,6 +343,8 @@ def export(view_id: str, output_format: str, output: Path | None):
         result = _export_json(view, clusters, papers_by_id)
     elif output_format in ("bibtex", "bib"):
         result = _export_bibtex(view, clusters, papers_by_id)
+    elif output_format in ("latex", "tex"):
+        result = _export_latex(view, clusters, papers_by_id)
     else:  # markdown or md
         result = _export_markdown(view, clusters, papers_by_id)
 
@@ -430,6 +433,12 @@ def _export_bibtex(view, clusters, papers_by_id) -> str:
     """Export view to BibTeX format."""
     import re
 
+    def doi_to_key(doi: str) -> str:
+        """Convert DOI to a valid BibTeX key."""
+        key = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
+        key = re.sub(r"[^a-zA-Z0-9]", "_", key)
+        return f"doi_{key}"
+
     def escape_bibtex(text: str) -> str:
         """Escape special characters for BibTeX."""
         if not text:
@@ -469,7 +478,7 @@ def _export_bibtex(view, clusters, papers_by_id) -> str:
     def paper_to_bibtex(paper) -> str:
         """Convert a Paper to a BibTeX entry."""
         entry_type = paper.bibtex_type
-        key = paper.citation_key
+        key = doi_to_key(paper.doi) if paper.doi else paper.citation_key
 
         # Build fields
         fields = []
@@ -547,6 +556,114 @@ def _export_bibtex(view, clusters, papers_by_id) -> str:
             entries.append("")
 
     return "\n".join(entries)
+
+
+def _export_latex(view, clusters, papers_by_id) -> str:
+    """Export view to LaTeX skeleton format."""
+    import re
+
+    def doi_to_key(doi: str) -> str:
+        """Convert DOI to a valid BibTeX key."""
+        # Remove DOI prefix and clean for use as key
+        key = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
+        key = re.sub(r"[^a-zA-Z0-9]", "_", key)
+        return f"doi_{key}"
+
+    def paper_cite_key(paper) -> str:
+        """Get citation key for a paper, preferring DOI-based keys."""
+        if paper.doi:
+            return doi_to_key(paper.doi)
+        return paper.citation_key
+
+    def escape_latex(text: str) -> str:
+        """Escape special LaTeX characters."""
+        if not text:
+            return ""
+        replacements = [
+            ("\\", r"\textbackslash{}"),
+            ("&", r"\&"),
+            ("%", r"\%"),
+            ("$", r"\$"),
+            ("#", r"\#"),
+            ("_", r"\_"),
+            ("{", r"\{"),
+            ("}", r"\}"),
+            ("~", r"\textasciitilde{}"),
+            ("^", r"\textasciicircum{}"),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    lines = [
+        "% LaTeX skeleton generated by Tuxedo",
+        f"% View: {view.name}",
+        f"% Research Question: {view.prompt[:80]}...",
+        "%",
+        "% Usage: Include this in your document and compile with your .bib file",
+        "% Generate .bib with: tuxedo export <view_id> -f bibtex -o references.bib",
+        "",
+        r"\documentclass{article}",
+        r"\usepackage[utf8]{inputenc}",
+        r"\usepackage{natbib}",
+        "",
+        r"\begin{document}",
+        "",
+        f"\\title{{{escape_latex(view.name)}}}",
+        r"\maketitle",
+        "",
+    ]
+
+    def render_cluster(cluster, level=0):
+        # Determine section command based on level
+        if level == 0:
+            cmd = "section"
+        elif level == 1:
+            cmd = "subsection"
+        else:
+            cmd = "subsubsection"
+
+        lines.append(f"\\{cmd}{{{escape_latex(cluster.name)}}}")
+        lines.append("")
+
+        if cluster.description:
+            lines.append(f"% {cluster.description}")
+            lines.append("")
+
+        # Add placeholder text with citations
+        if cluster.paper_ids:
+            cite_keys = []
+            for pid in cluster.paper_ids:
+                if pid in papers_by_id:
+                    paper = papers_by_id[pid]
+                    cite_keys.append(paper_cite_key(paper))
+
+            if cite_keys:
+                lines.append("% TODO: Write synthesis of the following papers:")
+                for pid in cluster.paper_ids:
+                    if pid in papers_by_id:
+                        paper = papers_by_id[pid]
+                        lines.append(f"%   - {paper.title[:70]}")
+                lines.append("")
+                lines.append(f"\\citep{{{', '.join(cite_keys)}}}")
+                lines.append("")
+
+        # Recurse for subclusters
+        for sub in cluster.subclusters:
+            render_cluster(sub, level + 1)
+
+    for cluster in clusters:
+        render_cluster(cluster)
+
+    lines.extend([
+        "",
+        r"\bibliographystyle{plainnat}",
+        r"\bibliography{references}",
+        "",
+        r"\end{document}",
+    ])
+
+    return "\n".join(lines)
 
 
 @main.command()

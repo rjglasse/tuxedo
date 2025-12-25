@@ -43,7 +43,7 @@ Important:
 class PaperClusterer:
     """Cluster papers using OpenAI."""
 
-    def __init__(self, api_key: str | None = None, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str | None = None, model: str = "gpt-5.2"):
         self.client = OpenAI(api_key=api_key)  # Uses OPENAI_API_KEY env var if None
         self.model = model
 

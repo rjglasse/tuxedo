@@ -208,3 +208,7 @@ class Project:
     def cluster_count(self, view_id: str | None = None) -> int:
         """Get number of top-level clusters."""
         return self.db.cluster_count(view_id)
+
+    def move_paper_to_cluster(self, view_id: str, paper_id: str, target_cluster_id: str) -> None:
+        """Move a paper to a different cluster."""
+        self.db.move_paper_to_cluster(view_id, paper_id, target_cluster_id)

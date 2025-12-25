@@ -410,3 +410,26 @@ class Database:
         """Get the number of cluster views."""
         with self._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM cluster_views").fetchone()[0]
+
+    def move_paper_to_cluster(self, view_id: str, paper_id: str, target_cluster_id: str) -> None:
+        """Move a paper to a different cluster within a view."""
+        with self._connect() as conn:
+            # Get all cluster IDs for this view
+            cluster_ids = [
+                row[0] for row in conn.execute(
+                    "SELECT id FROM clusters WHERE view_id = ?", (view_id,)
+                ).fetchall()
+            ]
+
+            # Remove paper from all clusters in this view
+            placeholders = ",".join("?" * len(cluster_ids))
+            conn.execute(
+                f"DELETE FROM cluster_papers WHERE paper_id = ? AND cluster_id IN ({placeholders})",
+                [paper_id] + cluster_ids,
+            )
+
+            # Add paper to target cluster
+            conn.execute(
+                "INSERT INTO cluster_papers (cluster_id, paper_id, position) VALUES (?, ?, 0)",
+                (target_cluster_id, paper_id),
+            )

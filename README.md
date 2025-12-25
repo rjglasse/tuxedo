@@ -2,7 +2,7 @@
 
 TUI app for organizing systematic literature review papers using LLMs.
 
-<img width="1777" height="618" alt="Screenshot 2025-12-25 at 18 55 50" src="https://github.com/user-attachments/assets/fbccfd09-ecae-4a3d-bd55-1a4ca0070998" />
+<img width="1904" height="824" alt="Screenshot 2025-12-26 at 00 27 37" src="https://github.com/user-attachments/assets/11bfd720-88f2-4d35-bcae-c249accdc6ed" />
 
 ## How it works
 

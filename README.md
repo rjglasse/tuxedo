@@ -2,56 +2,82 @@
 
 TUI app for organizing systematic literature review papers using LLMs.
 
-## Installation
+## Quick Start
 
 ```bash
+# Install
 uv sync
+
+# Start Grobid (PDF extraction)
+docker run --rm -p 8070:8070 lfoppiano/grobid:0.8.0
+
+# Set OpenAI key
+export OPENAI_API_KEY=sk-...
+
+# Initialize project
+uv run tuxedo init ~/papers -q "What are the effects of X on Y?"
+
+# Process PDFs → Cluster → View
+uv run tuxedo process
+uv run tuxedo cluster
+uv run tuxedo view
 ```
 
-## Usage
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `init <pdfs> -q "..."` | Create project from PDF folder |
+| `process` | Extract metadata via Grobid |
+| `cluster` | Cluster papers with LLM |
+| `view` | Interactive TUI |
+| `views` | List clustering views |
+| `export <view_id> -f bibtex` | Export to BibTeX/Markdown/JSON |
+| `papers` | List all papers |
+| `status` | Show project info |
+
+## TUI Keybindings
+
+| Key | Action |
+|-----|--------|
+| `/` | Search papers |
+| `o` | Open PDF |
+| `e` / `c` | Expand / Collapse all |
+| `n` | New clustering view |
+| `d` | Delete view |
+| `q` | Back / Quit |
+
+## Multiple Views
+
+Create different clusterings with custom prompts:
 
 ```bash
-# Initialize a project (copies PDFs to project folder)
-uv run tuxedo init ~/Downloads/papers -q "What are the effects of X on Y?"
+uv run tuxedo cluster -n "By Method" -p "Group by research methodology"
+uv run tuxedo cluster -n "By Year" -p "Group chronologically by publication era"
+```
 
-# Or create in a specific directory
-uv run tuxedo init ~/Downloads/papers -o ./my-review -q "Research question here"
+## Export
 
-# Process PDFs with Grobid
-uv run tuxedo process
+```bash
+# BibTeX for LaTeX
+uv run tuxedo export abc123 -f bibtex -o refs.bib
 
-# Cluster papers with LLM
-uv run tuxedo cluster
-
-# View interactive structure
-uv run tuxedo view
-
-# Check project status
-uv run tuxedo status
+# Markdown outline for writing
+uv run tuxedo export abc123 -f markdown -o outline.md
 ```
 
 ## Project Structure
 
-After `init`, your project will have this structure:
-
 ```
 my-review/
-├── tuxedo.toml      # Project config (name, research question, settings)
-├── papers/          # PDFs copied here
-│   ├── paper1.pdf
-│   └── paper2.pdf
+├── tuxedo.toml      # Config
+├── papers/          # PDFs
 └── data/
-    └── tuxedo.db    # SQLite database with extracted paper data & clusters
+    └── tuxedo.db    # Paper data & clusters
 ```
 
 ## Requirements
 
-- **Grobid**: PDF extraction service
-  ```bash
-  docker run --rm -p 8070:8070 lfoppiano/grobid:0.8.0
-  ```
-
-- **OpenAI API key**: For clustering
-  ```bash
-  export OPENAI_API_KEY=sk-...
-  ```
+- Python 3.11+
+- [Grobid](https://github.com/kermitt2/grobid) for PDF extraction
+- OpenAI API key for clustering

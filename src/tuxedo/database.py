@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS papers (
     doi TEXT,
     sections TEXT NOT NULL,  -- JSON object
     keywords TEXT NOT NULL,  -- JSON array
+    -- Bibliographic fields for BibTeX
+    journal TEXT,
+    booktitle TEXT,
+    publisher TEXT,
+    volume TEXT,
+    number TEXT,
+    pages TEXT,
+    arxiv_id TEXT,
+    url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -69,6 +78,18 @@ CREATE TABLE IF NOT EXISTS cluster_views (
 -- We handle this in Python by checking the schema
 """
 
+# Migration to add bibliographic fields for BibTeX export
+BIBLIO_COLUMNS = [
+    ("journal", "TEXT"),
+    ("booktitle", "TEXT"),
+    ("publisher", "TEXT"),
+    ("volume", "TEXT"),
+    ("number", "TEXT"),
+    ("pages", "TEXT"),
+    ("arxiv_id", "TEXT"),
+    ("url", "TEXT"),
+]
+
 
 class Database:
     """SQLite database for storing paper and cluster data."""
@@ -103,6 +124,14 @@ class Database:
 
             conn.executescript(SCHEMA)
 
+            # Migration: add bibliographic columns if they don't exist
+            cursor = conn.execute("PRAGMA table_info(papers)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+
+            for col_name, col_type in BIBLIO_COLUMNS:
+                if col_name not in existing_columns:
+                    conn.execute(f"ALTER TABLE papers ADD COLUMN {col_name} {col_type}")
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """Context manager for database connections."""
@@ -125,8 +154,9 @@ class Database:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO papers
-                (id, pdf_filename, title, authors, abstract, year, doi, sections, keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, pdf_filename, title, authors, abstract, year, doi, sections, keywords,
+                 journal, booktitle, publisher, volume, number, pages, arxiv_id, url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     paper.id,
@@ -138,6 +168,14 @@ class Database:
                     paper.doi,
                     json.dumps(paper.sections),
                     json.dumps(paper.keywords),
+                    paper.journal,
+                    paper.booktitle,
+                    paper.publisher,
+                    paper.volume,
+                    paper.number,
+                    paper.pages,
+                    paper.arxiv_id,
+                    paper.url,
                 ),
             )
 
@@ -180,6 +218,14 @@ class Database:
             doi=row["doi"],
             sections=json.loads(row["sections"]),
             keywords=json.loads(row["keywords"]),
+            journal=row["journal"],
+            booktitle=row["booktitle"],
+            publisher=row["publisher"],
+            volume=row["volume"],
+            number=row["number"],
+            pages=row["pages"],
+            arxiv_id=row["arxiv_id"],
+            url=row["url"],
         )
 
     # Cluster View operations

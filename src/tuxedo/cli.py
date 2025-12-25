@@ -307,7 +307,7 @@ def delete_view(view_id: str, force: bool):
     "-f",
     "--format",
     "output_format",
-    type=click.Choice(["json", "markdown", "md"]),
+    type=click.Choice(["json", "markdown", "md", "bibtex", "bib"]),
     default="markdown",
     help="Output format (default: markdown)",
 )
@@ -316,6 +316,11 @@ def export(view_id: str, output_format: str, output: Path | None):
     """Export a clustering view to file.
 
     VIEW_ID is the ID of the view to export (use 'tuxedo views' to list).
+
+    Formats:
+      - markdown/md: Hierarchical outline for writing
+      - json: Structured data for processing
+      - bibtex/bib: Bibliography file for LaTeX
     """
     import json
 
@@ -335,6 +340,8 @@ def export(view_id: str, output_format: str, output: Path | None):
 
     if output_format == "json":
         result = _export_json(view, clusters, papers_by_id)
+    elif output_format in ("bibtex", "bib"):
+        result = _export_bibtex(view, clusters, papers_by_id)
     else:  # markdown or md
         result = _export_markdown(view, clusters, papers_by_id)
 
@@ -417,6 +424,129 @@ def _export_markdown(view, clusters, papers_by_id) -> str:
         render_cluster(cluster)
 
     return "\n".join(lines)
+
+
+def _export_bibtex(view, clusters, papers_by_id) -> str:
+    """Export view to BibTeX format."""
+    import re
+
+    def escape_bibtex(text: str) -> str:
+        """Escape special characters for BibTeX."""
+        if not text:
+            return ""
+        # Escape special LaTeX characters
+        replacements = [
+            ("&", r"\&"),
+            ("%", r"\%"),
+            ("$", r"\$"),
+            ("#", r"\#"),
+            ("_", r"\_"),
+            ("{", r"\{"),
+            ("}", r"\}"),
+            ("~", r"\textasciitilde{}"),
+            ("^", r"\textasciicircum{}"),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    def format_authors(authors) -> str:
+        """Format authors for BibTeX (Last, First and Last, First)."""
+        if not authors:
+            return ""
+        formatted = []
+        for author in authors:
+            parts = author.name.split()
+            if len(parts) >= 2:
+                # Assume last word is surname
+                surname = parts[-1]
+                forenames = " ".join(parts[:-1])
+                formatted.append(f"{surname}, {forenames}")
+            else:
+                formatted.append(author.name)
+        return " and ".join(formatted)
+
+    def paper_to_bibtex(paper) -> str:
+        """Convert a Paper to a BibTeX entry."""
+        entry_type = paper.bibtex_type
+        key = paper.citation_key
+
+        # Build fields
+        fields = []
+        fields.append(f"  title = {{{escape_bibtex(paper.title)}}}")
+
+        if paper.authors:
+            fields.append(f"  author = {{{format_authors(paper.authors)}}}")
+
+        if paper.year:
+            fields.append(f"  year = {{{paper.year}}}")
+
+        if paper.journal:
+            fields.append(f"  journal = {{{escape_bibtex(paper.journal)}}}")
+
+        if paper.booktitle:
+            fields.append(f"  booktitle = {{{escape_bibtex(paper.booktitle)}}}")
+
+        if paper.publisher:
+            fields.append(f"  publisher = {{{escape_bibtex(paper.publisher)}}}")
+
+        if paper.volume:
+            fields.append(f"  volume = {{{paper.volume}}}")
+
+        if paper.number:
+            fields.append(f"  number = {{{paper.number}}}")
+
+        if paper.pages:
+            fields.append(f"  pages = {{{paper.pages}}}")
+
+        if paper.doi:
+            fields.append(f"  doi = {{{paper.doi}}}")
+
+        if paper.url:
+            fields.append(f"  url = {{{paper.url}}}")
+
+        if paper.arxiv_id:
+            fields.append(f"  eprint = {{{paper.arxiv_id}}}")
+            fields.append(f"  archiveprefix = {{arXiv}}")
+
+        if paper.abstract:
+            # Truncate very long abstracts
+            abstract = paper.abstract[:2000] if len(paper.abstract) > 2000 else paper.abstract
+            fields.append(f"  abstract = {{{escape_bibtex(abstract)}}}")
+
+        if paper.keywords:
+            fields.append(f"  keywords = {{{', '.join(paper.keywords)}}}")
+
+        fields_str = ",\n".join(fields)
+        return f"@{entry_type}{{{key},\n{fields_str}\n}}"
+
+    # Collect all unique papers from clusters
+    all_paper_ids = set()
+
+    def collect_papers(cluster):
+        for pid in cluster.paper_ids:
+            all_paper_ids.add(pid)
+        for sub in cluster.subclusters:
+            collect_papers(sub)
+
+    for cluster in clusters:
+        collect_papers(cluster)
+
+    # Generate BibTeX entries
+    entries = []
+    entries.append(f"% BibTeX export from Tuxedo")
+    entries.append(f"% View: {view.name}")
+    entries.append(f"% Generated: {view.created_at.strftime('%Y-%m-%d')}")
+    entries.append(f"% Papers: {len(all_paper_ids)}")
+    entries.append("")
+
+    for pid in sorted(all_paper_ids):
+        if pid in papers_by_id:
+            paper = papers_by_id[pid]
+            entries.append(paper_to_bibtex(paper))
+            entries.append("")
+
+    return "\n".join(entries)
 
 
 @main.command()

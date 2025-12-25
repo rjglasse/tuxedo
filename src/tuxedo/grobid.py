@@ -209,6 +209,71 @@ class GrobidClient:
                 doi = idno.text.strip()
                 break
 
+        # Extract publisher
+        publisher = None
+        publisher_elem = root.find(".//tei:publicationStmt/tei:publisher", TEI_NS)
+        if publisher_elem is not None and publisher_elem.text:
+            publisher = publisher_elem.text.strip()
+
+        # Extract journal or booktitle from monogr
+        journal = None
+        booktitle = None
+        monogr = root.find(".//tei:sourceDesc//tei:monogr", TEI_NS)
+        if monogr is not None:
+            monogr_title = monogr.find("tei:title", TEI_NS)
+            if monogr_title is not None and monogr_title.text:
+                title_text = monogr_title.text.strip()
+                level = monogr_title.get("level", "")
+                # level="j" indicates journal, level="m" indicates monograph/proceedings
+                if level == "j":
+                    journal = title_text
+                elif level == "m" or "proceedings" in title_text.lower() or "conference" in title_text.lower():
+                    booktitle = title_text
+                else:
+                    # Default to booktitle for conference papers
+                    booktitle = title_text
+
+        # Extract volume, number (issue), pages
+        volume = None
+        number = None
+        pages = None
+
+        volume_elem = root.find(".//tei:sourceDesc//tei:biblScope[@unit='volume']", TEI_NS)
+        if volume_elem is not None and volume_elem.text:
+            volume = volume_elem.text.strip()
+
+        issue_elem = root.find(".//tei:sourceDesc//tei:biblScope[@unit='issue']", TEI_NS)
+        if issue_elem is not None and issue_elem.text:
+            number = issue_elem.text.strip()
+
+        page_elem = root.find(".//tei:sourceDesc//tei:biblScope[@unit='page']", TEI_NS)
+        if page_elem is not None:
+            page_from = page_elem.get("from", "")
+            page_to = page_elem.get("to", "")
+            if page_from and page_to:
+                pages = f"{page_from}--{page_to}" if page_from != page_to else page_from
+            elif page_elem.text:
+                pages = page_elem.text.strip()
+
+        # Extract arXiv ID
+        arxiv_id = None
+        for idno in root.findall(".//tei:sourceDesc//tei:idno[@type='arXiv']", TEI_NS):
+            if idno.text:
+                # Clean up arXiv ID (e.g., "arXiv:2212.05113v1[cs.CY]" -> "2212.05113")
+                arxiv_text = idno.text.strip()
+                if arxiv_text.startswith("arXiv:"):
+                    arxiv_text = arxiv_text[6:]
+                # Remove version and category suffix
+                arxiv_id = arxiv_text.split("v")[0].split("[")[0]
+                break
+
+        # Construct URL from DOI or arXiv
+        url = None
+        if doi:
+            url = f"https://doi.org/{doi}"
+        elif arxiv_id:
+            url = f"https://arxiv.org/abs/{arxiv_id}"
+
         # Extract sections
         sections = {}
         body = root.find(".//tei:body", TEI_NS)
@@ -241,6 +306,14 @@ class GrobidClient:
             doi=doi,
             sections=sections,
             keywords=keywords,
+            journal=journal,
+            booktitle=booktitle,
+            publisher=publisher,
+            volume=volume,
+            number=number,
+            pages=pages,
+            arxiv_id=arxiv_id,
+            url=url,
         )
 
     def process_directory(self, pdf_dir: Path) -> list[ProcessingResult]:

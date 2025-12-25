@@ -696,6 +696,7 @@ class TuxedoApp(App):
     """Main TUI application."""
 
     TITLE = "Tuxedo"
+    dark = True  # Always use dark mode
 
     def __init__(self, project: Project):
         super().__init__()

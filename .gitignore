@@ -44,3 +44,16 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# LaTeX temp files
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz

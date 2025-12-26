@@ -35,7 +35,6 @@ console = Console()
 @click.version_option()
 def main():
     """Tuxedo - Organize literature review papers with LLMs."""
-    pass
 
 
 @main.command()
@@ -61,9 +60,10 @@ def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str,
     project_name = name or project_dir.name
 
     # Check for existing project
-    if (project_dir / "tuxedo.toml").exists():
-        if not click.confirm("Project already exists. Overwrite?"):
-            raise click.Abort()
+    if (project_dir / "tuxedo.toml").exists() and not click.confirm(
+        "Project already exists. Overwrite?"
+    ):
+        raise click.Abort()
 
     # Count PDFs
     pdf_files = list(source_pdfs.glob("*.pdf"))
@@ -1147,6 +1147,55 @@ def view():
             raise click.Abort()
 
     run_tui(project)
+
+
+@main.command()
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]), required=False)
+def completion(shell: str | None):
+    """Generate shell completion script.
+
+    Run with a shell name to get the completion script:
+
+    \b
+      bash: eval "$(tuxedo completion bash)"
+      zsh:  eval "$(tuxedo completion zsh)"
+      fish: tuxedo completion fish | source
+
+    Or add to your shell config file for persistence.
+    """
+    import os
+    import subprocess
+
+    if not shell:
+        # Show instructions
+        console.print("[bold]Shell Completion Setup[/bold]\n")
+        console.print("Add one of the following to your shell configuration:\n")
+        console.print("[cyan]Bash[/cyan] (~/.bashrc):")
+        console.print('  eval "$(tuxedo completion bash)"')
+        console.print("\n[cyan]Zsh[/cyan] (~/.zshrc):")
+        console.print('  eval "$(tuxedo completion zsh)"')
+        console.print("\n[cyan]Fish[/cyan] (~/.config/fish/config.fish):")
+        console.print("  tuxedo completion fish | source")
+        return
+
+    # Generate completion script using Click's built-in support
+    env = os.environ.copy()
+    env["_TUXEDO_COMPLETE"] = f"{shell}_source"
+
+    try:
+        result = subprocess.run(
+            ["tuxedo"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.stdout:
+            click.echo(result.stdout)
+        elif result.returncode != 0:
+            console.print(f"[red]Error generating completion: {result.stderr}[/red]")
+    except FileNotFoundError:
+        console.print("[red]Could not find tuxedo command. Is it installed?[/red]")
 
 
 @main.command()

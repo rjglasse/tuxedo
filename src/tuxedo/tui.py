@@ -183,39 +183,50 @@ class EditPaperDialog(ModalScreen[dict | None]):
     }
 
     #edit-dialog {
-        width: 90;
+        width: 95%;
+        max-width: 120;
         height: auto;
-        max-height: 90%;
+        max-height: 85%;
         background: $surface;
         padding: 1 2;
         overflow-y: auto;
+        border: solid $primary;
     }
 
     #edit-dialog .title {
         text-style: bold;
+        text-align: center;
+        padding: 1;
+        background: $primary;
+        color: $text;
         margin-bottom: 1;
     }
 
     #edit-dialog .hint {
         color: $text-muted;
+        text-align: center;
         margin-bottom: 1;
     }
 
     #edit-dialog .field-label {
         color: $text-muted;
-        margin-top: 1;
+        height: 1;
     }
 
     #edit-dialog Input {
+        height: 1;
         margin-bottom: 0;
     }
 
     #edit-dialog .buttons {
-        margin-top: 1;
+        margin-top: 2;
+        align: center middle;
+        height: 3;
     }
 
-    #edit-dialog Button {
-        margin-right: 1;
+    #edit-dialog .buttons Button {
+        margin: 0 2;
+        min-width: 16;
     }
 
     #edit-dialog .row {
@@ -224,6 +235,16 @@ class EditPaperDialog(ModalScreen[dict | None]):
     }
 
     #edit-dialog .row > Vertical {
+        width: 1fr;
+        padding-right: 1;
+    }
+
+    #edit-dialog .row3 {
+        layout: horizontal;
+        height: auto;
+    }
+
+    #edit-dialog .row3 > Vertical {
         width: 1fr;
         padding-right: 1;
     }
@@ -236,7 +257,10 @@ class EditPaperDialog(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="edit-dialog"):
             yield Label("Edit Paper Metadata", classes="title")
-            yield Label(f"Editing: {self.paper.title[:60]}...", classes="hint")
+            yield Label(
+                f"{self.paper.title[:80]}{'...' if len(self.paper.title) > 80 else ''}",
+                classes="hint",
+            )
 
             yield Label("Title", classes="field-label")
             yield Input(value=self.paper.title, id="edit-title")
@@ -250,33 +274,23 @@ class EditPaperDialog(ModalScreen[dict | None]):
 
             with Horizontal(classes="row"):
                 with Vertical():
+                    yield Label("Journal", classes="field-label")
+                    yield Input(value=self.paper.journal or "", id="edit-journal")
+                with Vertical():
+                    yield Label("Conference/Booktitle", classes="field-label")
+                    yield Input(value=self.paper.booktitle or "", id="edit-booktitle")
+
+            with Horizontal(classes="row3"):
+                with Vertical():
                     yield Label("Year", classes="field-label")
                     yield Input(
                         value=str(self.paper.year) if self.paper.year else "", id="edit-year"
                     )
                 with Vertical():
-                    yield Label("DOI", classes="field-label")
-                    yield Input(value=self.paper.doi or "", id="edit-doi")
-
-            with Horizontal(classes="row"):
-                with Vertical():
-                    yield Label("Journal", classes="field-label")
-                    yield Input(value=self.paper.journal or "", id="edit-journal")
-                with Vertical():
-                    yield Label("Booktitle", classes="field-label")
-                    yield Input(value=self.paper.booktitle or "", id="edit-booktitle")
-
-            with Horizontal(classes="row"):
-                with Vertical():
-                    yield Label("Publisher", classes="field-label")
-                    yield Input(value=self.paper.publisher or "", id="edit-publisher")
-                with Vertical():
                     yield Label("Volume", classes="field-label")
                     yield Input(value=self.paper.volume or "", id="edit-volume")
-
-            with Horizontal(classes="row"):
                 with Vertical():
-                    yield Label("Number/Issue", classes="field-label")
+                    yield Label("Issue", classes="field-label")
                     yield Input(value=self.paper.number or "", id="edit-number")
                 with Vertical():
                     yield Label("Pages", classes="field-label")
@@ -284,8 +298,16 @@ class EditPaperDialog(ModalScreen[dict | None]):
 
             with Horizontal(classes="row"):
                 with Vertical():
+                    yield Label("DOI", classes="field-label")
+                    yield Input(value=self.paper.doi or "", id="edit-doi")
+                with Vertical():
                     yield Label("arXiv ID", classes="field-label")
                     yield Input(value=self.paper.arxiv_id or "", id="edit-arxiv")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("Publisher", classes="field-label")
+                    yield Input(value=self.paper.publisher or "", id="edit-publisher")
                 with Vertical():
                     yield Label("URL", classes="field-label")
                     yield Input(value=self.paper.url or "", id="edit-url")
@@ -295,8 +317,8 @@ class EditPaperDialog(ModalScreen[dict | None]):
             yield Input(value=keywords_str, id="edit-keywords")
 
             with Horizontal(classes="buttons"):
-                yield Button("Save", variant="primary", id="save-btn")
-                yield Button("Cancel", id="cancel-btn")
+                yield Button("[ Save ]", variant="primary", id="save-btn")
+                yield Button("[ Cancel ]", variant="default", id="cancel-btn")
 
     def on_mount(self) -> None:
         self.query_one("#edit-title", Input).focus()

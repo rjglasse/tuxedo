@@ -50,14 +50,24 @@ uv run tuxedo view
 
 ## TUI Keybindings
 
+### View Selection Screen
+| Key | Action |
+|-----|--------|
+| `n` | New clustering view |
+| `d` | Delete view |
+| `q` | Quit |
+
+### Cluster View Screen
 | Key | Action |
 |-----|--------|
 | `/` | Search papers |
-| `o` | Open PDF |
+| `o` | Open web (DOI or Google Scholar) |
+| `p` | Open local PDF |
+| `m` | Move paper to different cluster |
+| `E` | Edit paper metadata |
 | `e` / `c` | Expand / Collapse all |
-| `n` | New clustering view |
-| `d` | Delete view |
-| `q` | Back / Quit |
+| `?` | Show help |
+| `q` | Back |
 
 ## Multiple Views
 

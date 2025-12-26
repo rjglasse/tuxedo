@@ -225,12 +225,23 @@ def process(pdf_file: Path | None, max_retries: int):
     type=int,
     help="Process papers in batches of this size to handle token limits (e.g., 10)",
 )
+@click.option(
+    "--auto",
+    "-a",
+    default=None,
+    is_flag=False,
+    flag_value="themes",
+    help="Auto-discover themes without a research question. "
+    "Optional values: themes (default), methodology, domain, temporal, findings, "
+    "or provide a custom focus string.",
+)
 def cluster(
     name: str | None,
     prompt: str | None,
     model: str,
     include_sections: str | None,
     batch_size: int | None,
+    auto: str | None,
 ):
     """Cluster papers using LLM.
 
@@ -240,6 +251,9 @@ def cluster(
     Use --batch-size for large paper sets to avoid token limits. Themes are
     developed incrementally: first batch establishes themes, subsequent batches
     add papers to existing themes or create new ones as needed.
+
+    Use --auto to let the AI discover themes without a research question.
+    Modes: themes, methodology, domain, temporal, findings, or custom focus.
     """
     project = Project.load()
     if not project:
@@ -279,11 +293,27 @@ def cluster(
 
     # Default name and prompt
     existing_views = project.get_views()
-    if not name:
-        if not existing_views:
-            name = "Research Question"
-        else:
-            name = f"View {len(existing_views) + 1}"
+
+    # Handle auto mode
+    if auto:
+        from tuxedo.clustering import AUTO_DISCOVERY_PROMPTS
+
+        auto_focus = AUTO_DISCOVERY_PROMPTS.get(auto, auto)
+        if not name:
+            # Generate descriptive name for auto mode
+            mode_name = auto.capitalize() if auto in AUTO_DISCOVERY_PROMPTS else "Custom"
+            name = f"Auto: {mode_name}"
+        if not prompt:
+            prompt = f"Auto-discovery: {auto_focus}"
+        console.print(f"[cyan]Auto-discovery mode:[/cyan] {auto_focus}")
+    else:
+        if not name:
+            if not existing_views:
+                name = "Research Question"
+            else:
+                name = f"View {len(existing_views) + 1}"
+        if not prompt:
+            prompt = project.config.research_question
 
     # Check for duplicate view name
     existing_names = {v.name.lower() for v in existing_views}
@@ -292,9 +322,6 @@ def cluster(
             f"A view named '{name}' already exists. Create another with the same name?"
         ):
             raise click.Abort()
-
-    if not prompt:
-        prompt = project.config.research_question
 
     # Parse section patterns
     section_patterns = None
@@ -336,6 +363,7 @@ def cluster(
                 include_sections=section_patterns,
                 batch_size=batch_size,
                 progress_callback=progress_callback,
+                auto_mode=auto,
             )
             progress.update(task, completed=num_batches)
     else:
@@ -346,8 +374,15 @@ def cluster(
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            progress.add_task(f"Analyzing {len(papers)} papers with {model}...", total=None)
-            clusters = clusterer.cluster_papers(papers, prompt, include_sections=section_patterns)
+            task_desc = (
+                f"Discovering themes in {len(papers)} papers..."
+                if auto
+                else f"Analyzing {len(papers)} papers with {model}..."
+            )
+            progress.add_task(task_desc, total=None)
+            clusters = clusterer.cluster_papers(
+                papers, prompt, include_sections=section_patterns, auto_mode=auto
+            )
 
     project.save_clusters(view.id, clusters)
 

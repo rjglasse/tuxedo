@@ -29,6 +29,16 @@ MODEL_OPTIONS = [
     ("o3-mini", "o3 Mini"),
 ]
 
+# Auto-discovery mode options
+AUTO_MODE_OPTIONS = [
+    ("", "Use research question/prompt"),
+    ("themes", "Auto: Discover themes"),
+    ("methodology", "Auto: Group by methodology"),
+    ("domain", "Auto: Group by domain"),
+    ("temporal", "Auto: Temporal evolution"),
+    ("findings", "Auto: Group by findings"),
+]
+
 if TYPE_CHECKING:
     from tuxedo.project import Project
 
@@ -574,6 +584,102 @@ class RenameClusterDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+EXPORT_FORMATS = [
+    ("markdown", "Markdown - Hierarchical outline"),
+    ("bibtex", "BibTeX - LaTeX bibliography"),
+    ("csv", "CSV - Spreadsheet format"),
+    ("ris", "RIS - Reference managers"),
+    ("json", "JSON - Structured data"),
+    ("latex", "LaTeX - Document skeleton"),
+]
+
+
+class ExportDialog(ModalScreen[dict | None]):
+    """A modal dialog for exporting a view."""
+
+    CSS = """
+    ExportDialog {
+        align: center middle;
+    }
+
+    #export-dialog {
+        width: 70;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+        border: solid $primary;
+    }
+
+    #export-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #export-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #export-dialog .field-label {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    #export-dialog Select {
+        width: 100%;
+    }
+
+    #export-dialog Input {
+        margin-top: 1;
+    }
+
+    #export-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #export-dialog Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, view_name: str):
+        super().__init__()
+        self.view_name = view_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="export-dialog"):
+            yield Label("Export View", classes="title")
+            yield Label(f"Exporting: {self.view_name}", classes="hint")
+            yield Label("Format", classes="field-label")
+            yield Select(
+                [(label, value) for value, label in EXPORT_FORMATS],
+                value="markdown",
+                id="export-format",
+            )
+            yield Label("Output file (leave empty for clipboard)", classes="field-label")
+            yield Input(placeholder="e.g., export.md", id="export-path")
+            with Horizontal(classes="buttons"):
+                yield Button("Export", variant="primary", id="export-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#export-format", Select).focus()
+
+    @on(Button.Pressed, "#export-btn")
+    def on_export(self) -> None:
+        format_select = self.query_one("#export-format", Select)
+        format_value = format_select.value if format_select.value != Select.BLANK else "markdown"
+        path = self.query_one("#export-path", Input).value.strip()
+        self.dismiss({"format": format_value, "path": path or None})
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class CreateClusterDialog(ModalScreen[dict | None]):
     """A modal dialog for creating a new cluster view."""
 
@@ -626,8 +732,14 @@ class CreateClusterDialog(ModalScreen[dict | None]):
             yield Label("Create New Clustering View", classes="title")
             yield Label("Different prompts organize papers in different ways", classes="hint")
             yield Input(placeholder="View name (e.g., 'By Methodology')", id="new-view-name")
+            yield Select(
+                [(label, value) for value, label in AUTO_MODE_OPTIONS],
+                value="",
+                id="new-view-auto",
+                prompt="Clustering mode",
+            )
             yield Input(
-                placeholder="Clustering prompt (leave empty for research question)",
+                placeholder="Custom prompt (ignored if auto mode selected)",
                 id="new-view-prompt",
             )
             yield Input(
@@ -652,6 +764,8 @@ class CreateClusterDialog(ModalScreen[dict | None]):
     @on(Button.Pressed, "#create-btn")
     def on_create(self) -> None:
         name = self.query_one("#new-view-name", Input).value.strip()
+        auto_select = self.query_one("#new-view-auto", Select)
+        auto_mode = auto_select.value if auto_select.value != Select.BLANK else ""
         prompt = self.query_one("#new-view-prompt", Input).value.strip()
         sections = self.query_one("#new-view-sections", Input).value.strip()
         batch_input = self.query_one("#new-view-batch", Input).value.strip()
@@ -673,6 +787,7 @@ class CreateClusterDialog(ModalScreen[dict | None]):
                 "sections": sections,
                 "model": model,
                 "batch_size": batch_size,
+                "auto_mode": auto_mode if auto_mode else None,
             }
         )
 
@@ -859,17 +974,31 @@ class ViewSelectionScreen(Screen):
         sections_input = config["sections"]
         model = config["model"]
         batch_size = config.get("batch_size")
+        auto_mode = config.get("auto_mode")
 
         # Parse section patterns
         section_patterns = None
         if sections_input:
             section_patterns = [s.strip() for s in sections_input.split(",") if s.strip()]
 
-        if not name:
+        # Handle auto mode naming and prompt
+        if auto_mode:
+            from tuxedo.clustering import AUTO_DISCOVERY_PROMPTS
+
+            auto_focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
+            if not name:
+                mode_name = (
+                    auto_mode.capitalize() if auto_mode in AUTO_DISCOVERY_PROMPTS else "Custom"
+                )
+                name = f"Auto: {mode_name}"
+            prompt = f"Auto-discovery: {auto_focus}"
+        elif not name:
             views = self.project.get_views()
             name = f"View {len(views) + 1}"
 
-        if batch_size:
+        if auto_mode:
+            self.app.call_from_thread(self.notify, f"Auto-discovering themes with {model}...")
+        elif batch_size:
             self.app.call_from_thread(
                 self.notify, f"Clustering with {model} (batch size: {batch_size})..."
             )
@@ -897,6 +1026,7 @@ class ViewSelectionScreen(Screen):
                 include_sections=section_patterns,
                 batch_size=batch_size,
                 progress_callback=progress_callback if batch_size else None,
+                auto_mode=auto_mode,
             )
             self.project.save_clusters(view.id, clusters)
 
@@ -1289,6 +1419,7 @@ class ClusterScreen(Screen):
         E: Edit paper metadata
         r: Rename the selected cluster
         R: Recluster papers with feedback
+        x: Export view to file or clipboard
         e: Expand all tree nodes
         c: Collapse all tree nodes
         q: Go back to view selection
@@ -1302,6 +1433,7 @@ class ClusterScreen(Screen):
         Binding("E", "edit_paper", "Edit"),
         Binding("r", "rename_cluster", "Rename"),
         Binding("R", "recluster", "Recluster"),
+        Binding("x", "export", "Export"),
         Binding("/", "search", "Search", priority=True),
         Binding("escape", "clear_search", "Clear", show=False),
         Binding("e", "expand_all", "Expand"),
@@ -1655,6 +1787,68 @@ class ClusterScreen(Screen):
             "Tip: Select a paper for o/p/m/E actions, or a cluster for r/R actions",
             timeout=5,
         )
+
+    def action_export(self) -> None:
+        """Export the current view to a file or clipboard."""
+
+        def handle_export(result: dict | None) -> None:
+            if not result:
+                return
+
+            from tuxedo.cli import (
+                _export_bibtex,
+                _export_csv,
+                _export_json,
+                _export_latex,
+                _export_markdown,
+                _export_ris,
+            )
+
+            format_type = result["format"]
+            output_path = result["path"]
+
+            # Generate export content
+            export_funcs = {
+                "markdown": _export_markdown,
+                "bibtex": lambda v, c, p: _export_bibtex(v, c, p, include_abstract=False),
+                "csv": _export_csv,
+                "ris": _export_ris,
+                "json": _export_json,
+                "latex": _export_latex,
+            }
+
+            func = export_funcs.get(format_type)
+            if not func:
+                self.notify(f"Unknown format: {format_type}", severity="error")
+                return
+
+            content = func(self.view, self.clusters, self._papers_by_id)
+
+            if output_path:
+                # Write to file
+                from pathlib import Path
+
+                path = Path(output_path)
+                path.write_text(content)
+                self.notify(f"Exported to {path.name}")
+            else:
+                # Copy to clipboard
+                try:
+                    if sys.platform == "darwin":
+                        subprocess.run(["pbcopy"], input=content.encode(), check=True)
+                    elif sys.platform == "win32":
+                        subprocess.run(["clip"], input=content.encode(), check=True)
+                    else:
+                        subprocess.run(
+                            ["xclip", "-selection", "clipboard"],
+                            input=content.encode(),
+                            check=True,
+                        )
+                    self.notify(f"Copied {format_type} to clipboard")
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    self.notify("Clipboard copy failed - save to file instead", severity="warning")
+
+        self.app.push_screen(ExportDialog(self.view.name), handle_export)
 
 
 # ============================================================================

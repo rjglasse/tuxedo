@@ -40,6 +40,49 @@ Important:
 - Aim for 3-7 top-level clusters depending on paper count
 - Only create subclusters if there's meaningful differentiation"""
 
+AUTO_CLUSTER_SYSTEM_PROMPT = """You are a systematic literature review assistant. Your task is to analyze a collection of academic papers and discover the natural themes, topics, and patterns that emerge from them.
+
+Without a predetermined research question, analyze the papers and:
+1. Identify the main themes, topics, or research areas represented
+2. Group papers by shared concepts, methodologies, or findings
+3. Create meaningful cluster names that capture the essence of each group
+4. Provide descriptions explaining what unifies papers in each cluster
+5. Organize subclusters where appropriate (max 2 levels deep)
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "clusters": [
+    {
+      "name": "Cluster Name",
+      "description": "Brief description of what papers in this cluster share",
+      "paper_ids": ["id1", "id2"],
+      "subclusters": [
+        {
+          "name": "Subcluster Name",
+          "description": "Description",
+          "paper_ids": ["id3"]
+        }
+      ]
+    }
+  ]
+}
+
+Important:
+- Every paper must appear in exactly one cluster or subcluster
+- Cluster names should be suitable as section headings
+- Aim for 3-7 top-level clusters depending on paper count
+- Only create subclusters if there's meaningful differentiation
+- Focus on discovering what themes naturally emerge from the papers"""
+
+# Predefined auto-discovery modes
+AUTO_DISCOVERY_PROMPTS = {
+    "themes": "Discover the main themes and topics in these papers",
+    "methodology": "Group papers by their research methodology (qualitative, quantitative, mixed methods, theoretical, etc.)",
+    "domain": "Group papers by their application domain or field of study",
+    "temporal": "Group papers by how ideas and approaches evolved over time",
+    "findings": "Group papers by their key findings or conclusions",
+}
+
 BATCH_CLUSTER_PROMPT = """You are a systematic literature review assistant. Your task is to assign new papers to existing themes OR create new themes if papers don't fit.
 
 You are given:
@@ -85,8 +128,9 @@ class PaperClusterer:
         include_sections: list[str] | None = None,
         batch_size: int | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        auto_mode: str | None = None,
     ) -> list[Cluster]:
-        """Cluster papers based on research question.
+        """Cluster papers based on research question or auto-discovery.
 
         Args:
             papers: List of papers to cluster
@@ -96,6 +140,8 @@ class PaperClusterer:
             batch_size: If set, process papers in batches to handle token limits.
                        Themes are developed incrementally across batches.
             progress_callback: Optional callback(batch_num, total_batches, message) for progress
+            auto_mode: If set, use auto-discovery mode. Values: "themes", "methodology",
+                      "domain", "temporal", "findings", or any custom focus string.
         """
         if not papers:
             return []
@@ -103,13 +149,31 @@ class PaperClusterer:
         # If batch_size is set and we have more papers than the batch size, use iterative mode
         if batch_size and len(papers) > batch_size:
             return self._cluster_papers_iterative(
-                papers, research_question, include_sections, batch_size, progress_callback
+                papers,
+                research_question,
+                include_sections,
+                batch_size,
+                progress_callback,
+                auto_mode=auto_mode,
             )
 
         # Standard single-pass clustering
         paper_summaries = self._build_paper_summaries(papers, include_sections)
 
-        user_prompt = f"""Research Question: {research_question}
+        # Choose system prompt and user prompt based on mode
+        if auto_mode:
+            system_prompt = AUTO_CLUSTER_SYSTEM_PROMPT
+            # Get the discovery focus
+            focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
+            user_prompt = f"""Discovery Focus: {focus}
+
+Papers to analyze:
+{json.dumps(paper_summaries, indent=2)}
+
+Analyze these {len(papers)} papers and discover the natural themes and groupings that emerge. Create a hierarchical structure that captures the main topics and patterns you identify."""
+        else:
+            system_prompt = CLUSTER_SYSTEM_PROMPT
+            user_prompt = f"""Research Question: {research_question}
 
 Papers to organize:
 {json.dumps(paper_summaries, indent=2)}
@@ -119,7 +183,7 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
@@ -166,6 +230,7 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         include_sections: list[str] | None,
         batch_size: int,
         progress_callback: Callable[[int, int, str], None] | None,
+        auto_mode: str | None = None,
     ) -> list[Cluster]:
         """Cluster papers iteratively in batches.
 
@@ -190,7 +255,18 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
 
             if batch_num == 1:
                 # First batch: use standard clustering to establish themes
-                user_prompt = f"""Research Question: {research_question}
+                if auto_mode:
+                    system_prompt = AUTO_CLUSTER_SYSTEM_PROMPT
+                    focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
+                    user_prompt = f"""Discovery Focus: {focus}
+
+Papers to analyze:
+{json.dumps(paper_summaries, indent=2)}
+
+Analyze these {len(batch)} papers and discover the natural themes and groupings that emerge. Create a hierarchical structure that captures the main topics and patterns you identify."""
+                else:
+                    system_prompt = CLUSTER_SYSTEM_PROMPT
+                    user_prompt = f"""Research Question: {research_question}
 
 Papers to organize:
 {json.dumps(paper_summaries, indent=2)}
@@ -200,7 +276,7 @@ Create a hierarchical structure for these {len(batch)} papers that would support
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     response_format={"type": "json_object"},

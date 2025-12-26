@@ -210,11 +210,9 @@ class EditPaperDialog(ModalScreen[dict | None]):
 
     #edit-dialog .field-label {
         color: $text-muted;
-        height: 1;
     }
 
     #edit-dialog Input {
-        height: 1;
         margin-bottom: 0;
     }
 

@@ -50,6 +50,88 @@ uv run tuxedo view
 | `delete-paper <id>` | Remove a paper from the project |
 | `status` | Show project info |
 
+## Clustering Modes
+
+Tuxedo supports three clustering modes to fit different workflows:
+
+### 1. Research Question (Default)
+
+Uses your project's research question to organize papers:
+
+```bash
+uv run tuxedo cluster
+uv run tuxedo cluster -p "Focus on methodology used"
+```
+
+### 2. Auto-Discovery
+
+Let the AI discover themes without a predefined question:
+
+```bash
+# Discover main themes
+uv run tuxedo cluster --auto
+
+# Specific discovery modes
+uv run tuxedo cluster --auto methodology   # Group by research methods
+uv run tuxedo cluster --auto domain        # Group by application area
+uv run tuxedo cluster --auto temporal      # Group by temporal evolution
+uv run tuxedo cluster --auto findings      # Group by key findings
+
+# Custom focus
+uv run tuxedo cluster --auto "machine learning techniques"
+```
+
+### 3. Guided Clustering
+
+Provide your own categories - the AI assigns papers to them:
+
+```bash
+# Simple category list
+uv run tuxedo cluster --categories "Quantitative, Qualitative, Mixed Methods"
+
+# Strict mode - no new categories allowed
+uv run tuxedo cluster -c "ML, NLP, Vision" --strict
+
+# From a structure file (YAML or JSON)
+uv run tuxedo cluster --structure taxonomy.yaml
+uv run tuxedo cluster -S categories.json --strict
+```
+
+#### Structure File Format
+
+YAML:
+```yaml
+clusters:
+  - name: Quantitative Methods
+    description: Papers using statistical analysis, experiments, surveys
+  - name: Qualitative Methods
+    description: Interviews, case studies, ethnography
+  - name: Mixed Methods
+    description: Combining quantitative and qualitative approaches
+```
+
+JSON:
+```json
+{
+  "clusters": [
+    {"name": "Quantitative", "description": "Statistical analysis"},
+    {"name": "Qualitative", "description": "Interviews, case studies"},
+    {"name": "Theoretical"}
+  ]
+}
+```
+
+## Multiple Views
+
+Create different clusterings with custom prompts:
+
+```bash
+uv run tuxedo cluster -n "By Method" -p "Group by research methodology"
+uv run tuxedo cluster -n "By Year" -p "Group chronologically by publication era"
+uv run tuxedo cluster -n "Auto Themes" --auto
+uv run tuxedo cluster -n "My Categories" -c "Theory, Practice, Case Studies"
+```
+
 ## TUI Keybindings
 
 ### View Selection Screen
@@ -69,21 +151,14 @@ uv run tuxedo view
 | `E` | Edit paper metadata |
 | `r` | Rename selected cluster |
 | `R` | Recluster with feedback |
+| `x` | Export view |
 | `e` / `c` | Expand / Collapse all |
 | `?` | Show help |
 | `q` | Back |
 
-## Multiple Views
-
-Create different clusterings with custom prompts:
-
-```bash
-uv run tuxedo cluster -n "By Method" -p "Group by research methodology"
-uv run tuxedo cluster -n "By Year" -p "Group chronologically by publication era"
-```
-
 ## Export
 
+Export from CLI:
 ```bash
 # BibTeX for LaTeX
 uv run tuxedo export abc123 -f bibtex -o refs.bib
@@ -97,6 +172,8 @@ uv run tuxedo export abc123 -f csv -o papers.csv
 # RIS for reference managers (EndNote, Zotero, Mendeley)
 uv run tuxedo export abc123 -f ris -o papers.ris
 ```
+
+Or press `x` in the TUI to export the current view directly.
 
 ## Project Structure
 

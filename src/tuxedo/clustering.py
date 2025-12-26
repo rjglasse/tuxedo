@@ -83,6 +83,35 @@ AUTO_DISCOVERY_PROMPTS = {
     "findings": "Group papers by their key findings or conclusions",
 }
 
+GUIDED_CLUSTER_SYSTEM_PROMPT = """You are a systematic literature review assistant. Your task is to organize academic papers into researcher-specified categories.
+
+You are given a list of categories that the researcher wants to use. Your job is to:
+1. Assign each paper to the most appropriate category
+2. Provide descriptions for each category based on the papers assigned
+3. {new_category_instruction}
+
+Respond ONLY with valid JSON in this exact format:
+{{
+  "clusters": [
+    {{
+      "name": "Category Name",
+      "description": "Brief description based on papers in this category",
+      "paper_ids": ["id1", "id2"],
+      "subclusters": []
+    }}
+  ]
+}}
+
+Important:
+- Every paper must appear in exactly one cluster
+- Use the exact category names provided by the researcher
+- {new_category_rule}
+- If a paper could fit multiple categories, choose the best fit
+- Category descriptions should reflect the actual papers assigned"""
+
+GUIDED_ALLOW_NEW = "If papers don't fit any provided category well, you may create new categories"
+GUIDED_STRICT = "Do NOT create new categories - assign every paper to one of the provided categories, even if the fit isn't perfect"
+
 BATCH_CLUSTER_PROMPT = """You are a systematic literature review assistant. Your task is to assign new papers to existing themes OR create new themes if papers don't fit.
 
 You are given:
@@ -129,8 +158,10 @@ class PaperClusterer:
         batch_size: int | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         auto_mode: str | None = None,
+        categories: list[str | dict] | None = None,
+        allow_new_categories: bool = True,
     ) -> list[Cluster]:
-        """Cluster papers based on research question or auto-discovery.
+        """Cluster papers based on research question, auto-discovery, or guided categories.
 
         Args:
             papers: List of papers to cluster
@@ -142,6 +173,10 @@ class PaperClusterer:
             progress_callback: Optional callback(batch_num, total_batches, message) for progress
             auto_mode: If set, use auto-discovery mode. Values: "themes", "methodology",
                       "domain", "temporal", "findings", or any custom focus string.
+            categories: If set, use guided clustering with these predefined categories.
+                       Can be a list of strings or dicts with "name" and optional "description".
+            allow_new_categories: If True (default), AI can create new categories for
+                                 papers that don't fit. If False, strict assignment only.
         """
         if not papers:
             return []
@@ -155,13 +190,37 @@ class PaperClusterer:
                 batch_size,
                 progress_callback,
                 auto_mode=auto_mode,
+                categories=categories,
+                allow_new_categories=allow_new_categories,
             )
 
         # Standard single-pass clustering
         paper_summaries = self._build_paper_summaries(papers, include_sections)
 
         # Choose system prompt and user prompt based on mode
-        if auto_mode:
+        if categories:
+            # Guided clustering with predefined categories
+            if allow_new_categories:
+                new_instruction = GUIDED_ALLOW_NEW
+                new_rule = "You may create additional categories if needed"
+            else:
+                new_instruction = GUIDED_STRICT
+                new_rule = "Only use the provided categories"
+
+            system_prompt = GUIDED_CLUSTER_SYSTEM_PROMPT.format(
+                new_category_instruction=new_instruction,
+                new_category_rule=new_rule,
+            )
+            # Handle both simple strings and structured dicts
+            categories_list = self._format_categories(categories)
+            user_prompt = f"""Predefined Categories:
+{categories_list}
+
+Papers to organize:
+{json.dumps(paper_summaries, indent=2)}
+
+Assign each of these {len(papers)} papers to the most appropriate category."""
+        elif auto_mode:
             system_prompt = AUTO_CLUSTER_SYSTEM_PROMPT
             # Get the discovery focus
             focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
@@ -223,6 +282,34 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
             paper_summaries.append(summary)
         return paper_summaries
 
+    def _format_categories(self, categories: list[str | dict]) -> str:
+        """Format categories for the prompt.
+
+        Handles both simple strings and structured dicts with name/description.
+        """
+        lines = []
+        for cat in categories:
+            if isinstance(cat, str):
+                lines.append(f"- {cat}")
+            elif isinstance(cat, dict):
+                name = cat.get("name", "")
+                desc = cat.get("description", "")
+                if desc:
+                    lines.append(f"- {name}: {desc}")
+                else:
+                    lines.append(f"- {name}")
+        return "\n".join(lines)
+
+    def _get_category_names(self, categories: list[str | dict]) -> list[str]:
+        """Extract category names from mixed list."""
+        names = []
+        for cat in categories:
+            if isinstance(cat, str):
+                names.append(cat)
+            elif isinstance(cat, dict):
+                names.append(cat.get("name", ""))
+        return [n for n in names if n]
+
     def _cluster_papers_iterative(
         self,
         papers: list[Paper],
@@ -231,6 +318,8 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         batch_size: int,
         progress_callback: Callable[[int, int, str], None] | None,
         auto_mode: str | None = None,
+        categories: list[str | dict] | None = None,
+        allow_new_categories: bool = True,
     ) -> list[Cluster]:
         """Cluster papers iteratively in batches.
 
@@ -245,6 +334,18 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         theme_papers: dict[str, list[str]] = {}
         theme_descriptions: dict[str, str] = {}
 
+        # For guided mode, initialize themes from categories
+        if categories:
+            for cat in categories:
+                if isinstance(cat, str):
+                    theme_papers[cat] = []
+                    theme_descriptions[cat] = ""
+                elif isinstance(cat, dict):
+                    name = cat.get("name", "")
+                    if name:
+                        theme_papers[name] = []
+                        theme_descriptions[name] = cat.get("description", "")
+
         for batch_num, batch in enumerate(batches, 1):
             if progress_callback:
                 progress_callback(
@@ -253,8 +354,8 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
 
             paper_summaries = self._build_paper_summaries(batch, include_sections)
 
-            if batch_num == 1:
-                # First batch: use standard clustering to establish themes
+            if batch_num == 1 and not categories:
+                # First batch without categories: use standard clustering to establish themes
                 if auto_mode:
                     system_prompt = AUTO_CLUSTER_SYSTEM_PROMPT
                     focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
@@ -295,8 +396,78 @@ Create a hierarchical structure for these {len(batch)} papers that would support
                         theme_papers[sub_name] = list(sub.paper_ids)
                         theme_descriptions[sub_name] = sub.description
 
+            elif categories:
+                # Guided mode: assign papers to predefined categories
+                if allow_new_categories:
+                    new_instruction = GUIDED_ALLOW_NEW
+                    new_rule = "You may create additional categories if needed"
+                else:
+                    new_instruction = GUIDED_STRICT
+                    new_rule = "Only use the provided categories"
+
+                system_prompt = GUIDED_CLUSTER_SYSTEM_PROMPT.format(
+                    new_category_instruction=new_instruction,
+                    new_category_rule=new_rule,
+                )
+                existing_themes = [
+                    {"name": name, "description": desc}
+                    for name, desc in theme_descriptions.items()
+                    if desc  # Only include categories that have descriptions
+                ]
+                categories_list = self._format_categories(categories)
+
+                if existing_themes:
+                    user_prompt = f"""Predefined Categories:
+{categories_list}
+
+Current category descriptions (from previous papers):
+{json.dumps(existing_themes, indent=2)}
+
+New papers to organize:
+{json.dumps(paper_summaries, indent=2)}
+
+Assign each paper to the most appropriate category."""
+                else:
+                    user_prompt = f"""Predefined Categories:
+{categories_list}
+
+Papers to organize:
+{json.dumps(paper_summaries, indent=2)}
+
+Assign each paper to the most appropriate category."""
+
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                )
+
+                result = json.loads(response.choices[0].message.content)
+                batch_clusters = result.get("clusters", [])
+
+                # Merge batch results into accumulated themes
+                for cluster in batch_clusters:
+                    name = cluster.get("name", "")
+                    desc = cluster.get("description", "")
+                    pids = cluster.get("paper_ids", [])
+
+                    if name in theme_papers:
+                        # Add to existing theme
+                        theme_papers[name].extend(pids)
+                        # Update description if refined
+                        if desc:
+                            theme_descriptions[name] = desc
+                    elif allow_new_categories or not categories:
+                        # New theme created (only if allowed)
+                        theme_papers[name] = list(pids)
+                        theme_descriptions[name] = desc
+
             else:
-                # Subsequent batches: assign to existing themes or create new ones
+                # Subsequent batches in normal mode: assign to existing themes
                 existing_themes = [
                     {"name": name, "description": desc} for name, desc in theme_descriptions.items()
                 ]

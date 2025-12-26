@@ -1,5 +1,6 @@
 """CLI interface for Tuxedo."""
 
+import json
 from pathlib import Path
 
 import click
@@ -235,6 +236,28 @@ def process(pdf_file: Path | None, max_retries: int):
     "Optional values: themes (default), methodology, domain, temporal, findings, "
     "or provide a custom focus string.",
 )
+@click.option(
+    "--categories",
+    "-c",
+    default=None,
+    help="Comma-separated list of categories to use for guided clustering. "
+    "Papers will be assigned to these categories.",
+)
+@click.option(
+    "--structure",
+    "-S",
+    default=None,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to YAML/JSON file defining category structure with descriptions. "
+    "Example: clusters: [{name: 'Category', description: '...'}]",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="With --categories or --structure, don't allow creating new categories. "
+    "All papers must be assigned to provided categories.",
+)
 def cluster(
     name: str | None,
     prompt: str | None,
@@ -242,6 +265,9 @@ def cluster(
     include_sections: str | None,
     batch_size: int | None,
     auto: str | None,
+    categories: str | None,
+    structure: Path | None,
+    strict: bool,
 ):
     """Cluster papers using LLM.
 
@@ -254,6 +280,10 @@ def cluster(
 
     Use --auto to let the AI discover themes without a research question.
     Modes: themes, methodology, domain, temporal, findings, or custom focus.
+
+    Use --categories to provide predefined categories for guided clustering.
+    Use --structure to load categories from a YAML/JSON file with descriptions.
+    Add --strict to prevent creating new categories beyond those provided.
     """
     project = Project.load()
     if not project:
@@ -294,8 +324,83 @@ def cluster(
     # Default name and prompt
     existing_views = project.get_views()
 
-    # Handle auto mode
-    if auto:
+    # Parse categories from --categories or --structure
+    category_list: list[str | dict] | None = None
+
+    if structure:
+        # Load from YAML/JSON file
+        try:
+            content = structure.read_text()
+            if structure.suffix in (".yaml", ".yml"):
+                try:
+                    import yaml
+
+                    data = yaml.safe_load(content)
+                except ImportError:
+                    console.print("[red]PyYAML not installed. Use: pip install pyyaml[/red]")
+                    raise click.Abort()
+            else:
+                data = json.loads(content)
+
+            # Extract clusters from the structure
+            if isinstance(data, dict) and "clusters" in data:
+                category_list = data["clusters"]
+            elif isinstance(data, list):
+                category_list = data
+            else:
+                console.print("[red]Invalid structure file format[/red]")
+                console.print("[dim]Expected: {clusters: [...]} or a list of categories[/dim]")
+                raise click.Abort()
+
+            if not category_list:
+                console.print("[red]No categories found in structure file[/red]")
+                raise click.Abort()
+
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid JSON in structure file: {e}[/red]")
+            raise click.Abort()
+        except Exception as e:
+            console.print(f"[red]Error reading structure file: {e}[/red]")
+            raise click.Abort()
+
+    elif categories:
+        category_list = [c.strip() for c in categories.split(",") if c.strip()]
+        if not category_list:
+            console.print("[red]No valid categories provided[/red]")
+            raise click.Abort()
+
+    # Handle different clustering modes
+    if category_list:
+        # Guided clustering mode - get display names
+        display_names = []
+        for cat in category_list:
+            if isinstance(cat, str):
+                display_names.append(cat)
+            elif isinstance(cat, dict):
+                display_names.append(cat.get("name", ""))
+        display_names = [n for n in display_names if n]
+
+        if not name:
+            name = "Guided: " + ", ".join(display_names[:3])
+            if len(display_names) > 3:
+                name += f" +{len(display_names) - 3} more"
+        if not prompt:
+            prompt = f"Guided clustering with categories: {', '.join(display_names)}"
+        mode_desc = "strict" if strict else "flexible (can add new)"
+        console.print(
+            f"[cyan]Guided clustering:[/cyan] {len(category_list)} categories ({mode_desc})"
+        )
+        for cat in category_list:
+            if isinstance(cat, str):
+                console.print(f"  [dim]• {cat}[/dim]")
+            elif isinstance(cat, dict):
+                cat_name = cat.get("name", "")
+                cat_desc = cat.get("description", "")
+                if cat_desc:
+                    console.print(f"  [dim]• {cat_name}:[/dim] {cat_desc}"[:80])
+                else:
+                    console.print(f"  [dim]• {cat_name}[/dim]")
+    elif auto:
         from tuxedo.clustering import AUTO_DISCOVERY_PROMPTS
 
         auto_focus = AUTO_DISCOVERY_PROMPTS.get(auto, auto)
@@ -364,6 +469,8 @@ def cluster(
                 batch_size=batch_size,
                 progress_callback=progress_callback,
                 auto_mode=auto,
+                categories=category_list,
+                allow_new_categories=not strict,
             )
             progress.update(task, completed=num_batches)
     else:
@@ -374,14 +481,20 @@ def cluster(
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task_desc = (
-                f"Discovering themes in {len(papers)} papers..."
-                if auto
-                else f"Analyzing {len(papers)} papers with {model}..."
-            )
+            if category_list:
+                task_desc = f"Assigning {len(papers)} papers to categories..."
+            elif auto:
+                task_desc = f"Discovering themes in {len(papers)} papers..."
+            else:
+                task_desc = f"Analyzing {len(papers)} papers with {model}..."
             progress.add_task(task_desc, total=None)
             clusters = clusterer.cluster_papers(
-                papers, prompt, include_sections=section_patterns, auto_mode=auto
+                papers,
+                prompt,
+                include_sections=section_patterns,
+                auto_mode=auto,
+                categories=category_list,
+                allow_new_categories=not strict,
             )
 
     project.save_clusters(view.id, clusters)

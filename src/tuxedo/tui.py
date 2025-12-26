@@ -743,6 +743,10 @@ class CreateClusterDialog(ModalScreen[dict | None]):
                 id="new-view-prompt",
             )
             yield Input(
+                placeholder="Categories (comma-separated, e.g., 'Quantitative, Qualitative, Mixed')",
+                id="new-view-categories",
+            )
+            yield Input(
                 placeholder="Include sections (e.g., 'method,results')", id="new-view-sections"
             )
             yield Input(
@@ -767,6 +771,7 @@ class CreateClusterDialog(ModalScreen[dict | None]):
         auto_select = self.query_one("#new-view-auto", Select)
         auto_mode = auto_select.value if auto_select.value != Select.BLANK else ""
         prompt = self.query_one("#new-view-prompt", Input).value.strip()
+        categories_input = self.query_one("#new-view-categories", Input).value.strip()
         sections = self.query_one("#new-view-sections", Input).value.strip()
         batch_input = self.query_one("#new-view-batch", Input).value.strip()
         model_select = self.query_one("#new-view-model", Select)
@@ -780,6 +785,11 @@ class CreateClusterDialog(ModalScreen[dict | None]):
             except ValueError:
                 pass
 
+        # Parse categories
+        categories = None
+        if categories_input:
+            categories = [c.strip() for c in categories_input.split(",") if c.strip()]
+
         self.dismiss(
             {
                 "name": name,
@@ -788,6 +798,7 @@ class CreateClusterDialog(ModalScreen[dict | None]):
                 "model": model,
                 "batch_size": batch_size,
                 "auto_mode": auto_mode if auto_mode else None,
+                "categories": categories,
             }
         )
 
@@ -975,14 +986,22 @@ class ViewSelectionScreen(Screen):
         model = config["model"]
         batch_size = config.get("batch_size")
         auto_mode = config.get("auto_mode")
+        categories = config.get("categories")
 
         # Parse section patterns
         section_patterns = None
         if sections_input:
             section_patterns = [s.strip() for s in sections_input.split(",") if s.strip()]
 
-        # Handle auto mode naming and prompt
-        if auto_mode:
+        # Handle different clustering modes
+        if categories:
+            # Guided clustering mode
+            if not name:
+                name = "Guided: " + ", ".join(categories[:3])
+                if len(categories) > 3:
+                    name += f" +{len(categories) - 3} more"
+            prompt = f"Guided clustering with categories: {', '.join(categories)}"
+        elif auto_mode:
             from tuxedo.clustering import AUTO_DISCOVERY_PROMPTS
 
             auto_focus = AUTO_DISCOVERY_PROMPTS.get(auto_mode, auto_mode)
@@ -996,7 +1015,11 @@ class ViewSelectionScreen(Screen):
             views = self.project.get_views()
             name = f"View {len(views) + 1}"
 
-        if auto_mode:
+        if categories:
+            self.app.call_from_thread(
+                self.notify, f"Guided clustering into {len(categories)} categories..."
+            )
+        elif auto_mode:
             self.app.call_from_thread(self.notify, f"Auto-discovering themes with {model}...")
         elif batch_size:
             self.app.call_from_thread(
@@ -1027,6 +1050,8 @@ class ViewSelectionScreen(Screen):
                 batch_size=batch_size,
                 progress_callback=progress_callback if batch_size else None,
                 auto_mode=auto_mode,
+                categories=categories,
+                allow_new_categories=True,  # TUI defaults to flexible mode
             )
             self.project.save_clusters(view.id, clusters)
 

@@ -965,6 +965,85 @@ class PaperDetail(Static):
             yield Static("Select a paper to view details", classes="meta")
 
 
+class ClusterDetail(Static):
+    """Widget to display cluster details."""
+
+    DEFAULT_CSS = """
+    ClusterDetail {
+        background: $surface;
+        padding: 1 2;
+        height: 100%;
+        overflow-y: auto;
+    }
+
+    ClusterDetail .title {
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+    }
+
+    ClusterDetail .meta {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    ClusterDetail .description {
+        color: $text;
+        margin-top: 1;
+    }
+
+    ClusterDetail .papers-header {
+        text-style: bold;
+        color: $secondary;
+        margin-top: 1;
+    }
+
+    ClusterDetail .paper-item {
+        color: $text-muted;
+        padding-left: 1;
+    }
+    """
+
+    def __init__(self, cluster: Cluster, papers_by_id: dict[str, Paper]):
+        super().__init__()
+        self.cluster = cluster
+        self.papers_by_id = papers_by_id
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"📁 {self.cluster.name}", classes="title")
+
+        # Paper count
+        total_papers = len(self.cluster.paper_ids)
+        for sub in self.cluster.subclusters:
+            total_papers += len(sub.paper_ids)
+        yield Static(f"{total_papers} papers in this cluster", classes="meta")
+
+        # Description
+        if self.cluster.description:
+            yield Static("Description", classes="papers-header")
+            yield Static(self.cluster.description, classes="description")
+
+        # List papers in cluster
+        if self.cluster.paper_ids:
+            yield Static("Papers", classes="papers-header")
+            for pid in self.cluster.paper_ids[:10]:
+                if pid in self.papers_by_id:
+                    paper = self.papers_by_id[pid]
+                    year = f" ({paper.year})" if paper.year else ""
+                    yield Static(f"• {paper.title[:60]}{year}", classes="paper-item")
+            if len(self.cluster.paper_ids) > 10:
+                yield Static(
+                    f"  ... and {len(self.cluster.paper_ids) - 10} more",
+                    classes="paper-item",
+                )
+
+        # Subclusters
+        if self.cluster.subclusters:
+            yield Static("Subclusters", classes="papers-header")
+            for sub in self.cluster.subclusters:
+                yield Static(f"• {sub.name} ({len(sub.paper_ids)} papers)", classes="paper-item")
+
+
 class ClusterTree(Tree):
     """Tree widget for displaying paper clusters hierarchically.
 
@@ -1264,6 +1343,7 @@ class ClusterScreen(Screen):
         self.view = view
         self.papers = project.get_papers()
         self.clusters = project.get_clusters(view.id)
+        self._papers_by_id = {p.id: p for p in self.papers}
         self._tree: ClusterTree | None = None
         self._detail: Container | None = None
         self._filter_text = ""
@@ -1294,9 +1374,22 @@ class ClusterScreen(Screen):
     @on(Tree.NodeHighlighted)
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         if self._tree and self._detail:
-            paper = self._tree.get_selected_paper()
             self._detail.remove_children()
-            self._detail.mount(PaperDetail(paper))
+
+            # Check if a paper is selected
+            paper = self._tree.get_selected_paper()
+            if paper:
+                self._detail.mount(PaperDetail(paper))
+                return
+
+            # Check if a cluster is selected
+            cluster = self._tree.get_selected_cluster()
+            if cluster:
+                self._detail.mount(ClusterDetail(cluster, self._papers_by_id))
+                return
+
+            # Nothing specific selected
+            self._detail.mount(PaperDetail(None))
 
     @on(Input.Changed, "#search-input")
     def on_search_changed(self, event: Input.Changed) -> None:

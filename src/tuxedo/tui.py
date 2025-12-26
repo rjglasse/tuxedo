@@ -1128,7 +1128,7 @@ class ClusterScreen(Screen):
             self.notify(f"Opening DOI: {paper.doi}")
         elif paper.url:
             url = paper.url
-            self.notify(f"Opening URL")
+            self.notify("Opening URL")
         else:
             # Fallback to Google Scholar search
             query = urllib.parse.quote(paper.title)
@@ -1186,7 +1186,7 @@ class ClusterScreen(Screen):
                     self._tree.clusters = self.clusters
                     self._tree._build_tree()
                     self._tree.restore_expanded_state(expanded)
-                self.notify(f"Moved paper to cluster")
+                self.notify("Moved paper to cluster")
 
         self.app.push_screen(
             MoveToClusterDialog(self.clusters, paper.title),

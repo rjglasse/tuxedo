@@ -376,7 +376,8 @@ def delete_view(view_id: str, force: bool):
     help="Output format (default: markdown)",
 )
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file (default: stdout)")
-def export(view_id: str, output_format: str, output: Path | None):
+@click.option("-a", "--abstract", is_flag=True, help="Include abstracts in BibTeX export")
+def export(view_id: str, output_format: str, output: Path | None, abstract: bool):
     """Export a clustering view to file.
 
     VIEW_ID is the ID of the view to export (use 'tuxedo views' to list).
@@ -387,7 +388,6 @@ def export(view_id: str, output_format: str, output: Path | None):
       - bibtex/bib: Bibliography file for LaTeX
       - latex/tex: LaTeX skeleton with sections and citations
     """
-    import json
 
     project = Project.load()
     if not project:
@@ -406,7 +406,7 @@ def export(view_id: str, output_format: str, output: Path | None):
     if output_format == "json":
         result = _export_json(view, clusters, papers_by_id)
     elif output_format in ("bibtex", "bib"):
-        result = _export_bibtex(view, clusters, papers_by_id)
+        result = _export_bibtex(view, clusters, papers_by_id, include_abstract=abstract)
     elif output_format in ("latex", "tex"):
         result = _export_latex(view, clusters, papers_by_id)
     else:  # markdown or md
@@ -493,7 +493,7 @@ def _export_markdown(view, clusters, papers_by_id) -> str:
     return "\n".join(lines)
 
 
-def _export_bibtex(view, clusters, papers_by_id) -> str:
+def _export_bibtex(view, clusters, papers_by_id, include_abstract: bool = False) -> str:
     """Export view to BibTeX format."""
     import re
 
@@ -580,9 +580,9 @@ def _export_bibtex(view, clusters, papers_by_id) -> str:
 
         if paper.arxiv_id:
             fields.append(f"  eprint = {{{paper.arxiv_id}}}")
-            fields.append(f"  archiveprefix = {{arXiv}}")
+            fields.append("  archiveprefix = {arXiv}")
 
-        if paper.abstract:
+        if include_abstract and paper.abstract:
             # Truncate very long abstracts
             abstract = paper.abstract[:2000] if len(paper.abstract) > 2000 else paper.abstract
             fields.append(f"  abstract = {{{escape_bibtex(abstract)}}}")
@@ -607,7 +607,7 @@ def _export_bibtex(view, clusters, papers_by_id) -> str:
 
     # Generate BibTeX entries
     entries = []
-    entries.append(f"% BibTeX export from Tuxedo")
+    entries.append("% BibTeX export from Tuxedo")
     entries.append(f"% View: {view.name}")
     entries.append(f"% Generated: {view.created_at.strftime('%Y-%m-%d')}")
     entries.append(f"% Papers: {len(all_paper_ids)}")
@@ -783,20 +783,23 @@ def papers():
         return
 
     table = Table(title=f"Papers ({len(paper_list)})")
-    table.add_column("#", style="dim")
+    table.add_column("ID", style="cyan")
     table.add_column("Title")
     table.add_column("Authors", style="dim")
     table.add_column("Year", justify="right")
+    table.add_column("DOI", style="dim")
 
-    for i, paper in enumerate(paper_list, 1):
+    for paper in paper_list:
         authors = ", ".join(a.name for a in paper.authors[:2])
         if len(paper.authors) > 2:
             authors += " et al."
+        doi_short = paper.doi[:25] + "..." if paper.doi and len(paper.doi) > 28 else paper.doi
         table.add_row(
-            str(i),
+            paper.id,
             paper.display_title,
             authors or "-",
             str(paper.year) if paper.year else "-",
+            doi_short or "-",
         )
 
     console.print(table)

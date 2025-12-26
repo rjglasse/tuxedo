@@ -60,7 +60,9 @@ class GrobidProcessingError(GrobidError):
             message = f"Failed to process {pdf_path.name}: HTTP {status_code}"
             if response_body:
                 # Truncate long responses
-                body_preview = response_body[:200] + "..." if len(response_body) > 200 else response_body
+                body_preview = (
+                    response_body[:200] + "..." if len(response_body) > 200 else response_body
+                )
                 message += f" - {body_preview}"
         elif cause:
             message = f"Failed to process {pdf_path.name}: {cause}"
@@ -190,7 +192,7 @@ class GrobidClient:
 
             # Wait before retry (exponential backoff: 1s, 2s, 4s...)
             if attempt < len(configs_to_try) - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
 
         # All retries exhausted
         if last_error:
@@ -281,7 +283,7 @@ class GrobidClient:
                 )
 
             if attempt < len(configs_to_try) - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
 
         return ProcessingResult(
             pdf_path=pdf_path,
@@ -295,7 +297,9 @@ class GrobidClient:
 
         # Extract title
         title_elem = root.find(".//tei:titleStmt/tei:title", TEI_NS)
-        title = title_elem.text.strip() if title_elem is not None and title_elem.text else pdf_path.stem
+        title = (
+            title_elem.text.strip() if title_elem is not None and title_elem.text else pdf_path.stem
+        )
 
         # Extract authors
         authors = []
@@ -365,7 +369,11 @@ class GrobidClient:
                 # level="j" indicates journal, level="m" indicates monograph/proceedings
                 if level == "j":
                     journal = title_text
-                elif level == "m" or "proceedings" in title_text.lower() or "conference" in title_text.lower():
+                elif (
+                    level == "m"
+                    or "proceedings" in title_text.lower()
+                    or "conference" in title_text.lower()
+                ):
                     booktitle = title_text
                 else:
                     # Default to booktitle for conference papers

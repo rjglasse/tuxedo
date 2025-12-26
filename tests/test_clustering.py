@@ -48,11 +48,13 @@ def sample_papers():
 @pytest.fixture
 def mock_openai_response():
     """Create a mock OpenAI response."""
+
     def _make_response(clusters_json):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = json.dumps(clusters_json)
         return mock_response
+
     return _make_response
 
 
@@ -128,8 +130,7 @@ class TestBuildPaperSummaries:
         with patch("tuxedo.clustering.OpenAI"):
             clusterer = PaperClusterer()
             summaries = clusterer._build_paper_summaries(
-                sample_papers[:1],
-                include_sections=["method"]
+                sample_papers[:1], include_sections=["method"]
             )
 
         assert "sections" in summaries[0]
@@ -140,8 +141,7 @@ class TestBuildPaperSummaries:
         with patch("tuxedo.clustering.OpenAI"):
             clusterer = PaperClusterer()
             summaries = clusterer._build_paper_summaries(
-                sample_papers[:1],
-                include_sections=["METHODS"]
+                sample_papers[:1], include_sections=["METHODS"]
             )
 
         assert "sections" in summaries[0]
@@ -152,8 +152,7 @@ class TestBuildPaperSummaries:
             clusterer = PaperClusterer()
             # paper2 has no sections
             summaries = clusterer._build_paper_summaries(
-                [sample_papers[1]],
-                include_sections=["method"]
+                [sample_papers[1]], include_sections=["method"]
             )
 
         assert "sections" not in summaries[0]
@@ -168,10 +167,7 @@ class TestBuildPaperSummaries:
         )
         with patch("tuxedo.clustering.OpenAI"):
             clusterer = PaperClusterer()
-            summaries = clusterer._build_paper_summaries(
-                [paper],
-                include_sections=["method"]
-            )
+            summaries = clusterer._build_paper_summaries([paper], include_sections=["method"])
 
         assert len(summaries[0]["sections"]["Methods"]) == 2000
 
@@ -322,9 +318,9 @@ class TestBatchClustering:
 
     def test_batch_triggered_above_threshold(self, sample_papers, mock_openai_response):
         """Batch mode used when papers > batch_size."""
-        response = mock_openai_response({
-            "clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]
-        })
+        response = mock_openai_response(
+            {"clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]}
+        )
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
             mock_client = MagicMock()
@@ -339,9 +335,9 @@ class TestBatchClustering:
 
     def test_batch_first_uses_standard_prompt(self, sample_papers, mock_openai_response):
         """First batch uses standard clustering prompt."""
-        response = mock_openai_response({
-            "clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]
-        })
+        response = mock_openai_response(
+            {"clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]}
+        )
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
             mock_client = MagicMock()
@@ -357,9 +353,9 @@ class TestBatchClustering:
 
     def test_batch_subsequent_uses_batch_prompt(self, sample_papers, mock_openai_response):
         """Subsequent batches use batch clustering prompt."""
-        response = mock_openai_response({
-            "clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]
-        })
+        response = mock_openai_response(
+            {"clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]}
+        )
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
             mock_client = MagicMock()
@@ -375,9 +371,17 @@ class TestBatchClustering:
 
     def test_batch_subsequent_includes_existing_themes(self, sample_papers, mock_openai_response):
         """Subsequent batches include existing theme information."""
-        response = mock_openai_response({
-            "clusters": [{"name": "ML Theme", "description": "Machine learning papers", "paper_ids": ["p1"]}]
-        })
+        response = mock_openai_response(
+            {
+                "clusters": [
+                    {
+                        "name": "ML Theme",
+                        "description": "Machine learning papers",
+                        "paper_ids": ["p1"],
+                    }
+                ]
+            }
+        )
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
             mock_client = MagicMock()
@@ -394,9 +398,9 @@ class TestBatchClustering:
 
     def test_batch_progress_callback(self, sample_papers, mock_openai_response):
         """Progress callback is called for each batch."""
-        response = mock_openai_response({
-            "clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]
-        })
+        response = mock_openai_response(
+            {"clusters": [{"name": "Theme", "description": "Desc", "paper_ids": ["p1"]}]}
+        )
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
             mock_client = MagicMock()
@@ -410,10 +414,7 @@ class TestBatchClustering:
 
             clusterer = PaperClusterer()
             clusterer.cluster_papers(
-                sample_papers,
-                "question",
-                batch_size=1,
-                progress_callback=callback
+                sample_papers, "question", batch_size=1, progress_callback=callback
             )
 
         assert len(progress_calls) == 3
@@ -425,18 +426,20 @@ class TestBatchClustering:
         """Batch results are merged correctly."""
         # Different responses for each batch
         responses = [
-            mock_openai_response({
-                "clusters": [{"name": "Theme A", "description": "First", "paper_ids": ["p1"]}]
-            }),
-            mock_openai_response({
-                "clusters": [{"name": "Theme A", "description": "First", "paper_ids": ["p2"]}]
-            }),
-            mock_openai_response({
-                "clusters": [
-                    {"name": "Theme A", "description": "First", "paper_ids": []},
-                    {"name": "Theme B", "description": "New theme", "paper_ids": ["p3"]},
-                ]
-            }),
+            mock_openai_response(
+                {"clusters": [{"name": "Theme A", "description": "First", "paper_ids": ["p1"]}]}
+            ),
+            mock_openai_response(
+                {"clusters": [{"name": "Theme A", "description": "First", "paper_ids": ["p2"]}]}
+            ),
+            mock_openai_response(
+                {
+                    "clusters": [
+                        {"name": "Theme A", "description": "First", "paper_ids": []},
+                        {"name": "Theme B", "description": "New theme", "paper_ids": ["p3"]},
+                    ]
+                }
+            ),
         ]
 
         with patch("tuxedo.clustering.OpenAI") as mock_openai:
@@ -468,12 +471,11 @@ class TestRecluster:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            current = [Cluster(id="c1", name="Old", description="", paper_ids=["p1"], subclusters=[])]
+            current = [
+                Cluster(id="c1", name="Old", description="", paper_ids=["p1"], subclusters=[])
+            ]
             clusterer.recluster(
-                sample_papers[:1],
-                "question",
-                "Please split into more categories",
-                current
+                sample_papers[:1], "question", "Please split into more categories", current
             )
 
             call_args = mock_client.chat.completions.create.call_args
@@ -496,7 +498,7 @@ class TestRecluster:
                     name="Existing Theme",
                     description="Theme desc",
                     paper_ids=["p1"],
-                    subclusters=[]
+                    subclusters=[],
                 )
             ]
             clusterer.recluster(sample_papers[:1], "question", "feedback", current)
@@ -544,8 +546,14 @@ class TestClustersToDict:
                 description="Parent desc",
                 paper_ids=["p1"],
                 subclusters=[
-                    Cluster(id="c1a", name="Child", description="Child desc", paper_ids=["p2"], subclusters=[])
-                ]
+                    Cluster(
+                        id="c1a",
+                        name="Child",
+                        description="Child desc",
+                        paper_ids=["p2"],
+                        subclusters=[],
+                    )
+                ],
             ),
         ]
 

@@ -176,6 +176,14 @@ class Project:
         """
         self.db.update_paper(paper_id, updates)
 
+    def get_paper(self, paper_id: str) -> Paper | None:
+        """Get a paper by ID."""
+        return self.db.get_paper(paper_id)
+
+    def delete_paper(self, paper_id: str) -> None:
+        """Delete a paper from the database."""
+        self.db.delete_paper(paper_id)
+
     # Cluster View methods
 
     def create_view(self, name: str, prompt: str) -> ClusterView:
@@ -221,3 +229,9 @@ class Project:
     def move_paper_to_cluster(self, view_id: str, paper_id: str, target_cluster_id: str) -> None:
         """Move a paper to a different cluster."""
         self.db.move_paper_to_cluster(view_id, paper_id, target_cluster_id)
+
+    def rename_cluster(
+        self, cluster_id: str, new_name: str, new_description: str | None = None
+    ) -> None:
+        """Rename a cluster and optionally update its description."""
+        self.db.rename_cluster(cluster_id, new_name, new_description)

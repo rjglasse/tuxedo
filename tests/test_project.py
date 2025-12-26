@@ -319,10 +319,13 @@ class TestProjectPaperMethods:
         """Papers can be updated via project."""
         created_project.add_paper(sample_paper)
 
-        created_project.update_paper("paper1", {
-            "title": "Updated Title",
-            "year": 2025,
-        })
+        created_project.update_paper(
+            "paper1",
+            {
+                "title": "Updated Title",
+                "year": 2025,
+            },
+        )
 
         papers = created_project.get_papers()
         assert papers[0].title == "Updated Title"
@@ -402,7 +405,9 @@ class TestProjectClusterMethods:
                 description="First theme",
                 paper_ids=["p1"],
                 subclusters=[
-                    Cluster(id="c1a", name="Subtheme", description="", paper_ids=["p2"], subclusters=[])
+                    Cluster(
+                        id="c1a", name="Subtheme", description="", paper_ids=["p2"], subclusters=[]
+                    )
                 ],
             ),
         ]
@@ -421,9 +426,15 @@ class TestProjectClusterMethods:
         assert created_project.cluster_count(view.id) == 0
 
         clusters = [
-            Cluster(id="c1", name="A", description="", paper_ids=[], subclusters=[
-                Cluster(id="c1a", name="A1", description="", paper_ids=[], subclusters=[])
-            ]),
+            Cluster(
+                id="c1",
+                name="A",
+                description="",
+                paper_ids=[],
+                subclusters=[
+                    Cluster(id="c1a", name="A1", description="", paper_ids=[], subclusters=[])
+                ],
+            ),
             Cluster(id="c2", name="B", description="", paper_ids=[], subclusters=[]),
         ]
         created_project.save_clusters(view.id, clusters)

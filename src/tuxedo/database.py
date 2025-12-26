@@ -182,9 +182,7 @@ class Database:
     def get_paper(self, paper_id: str) -> Paper | None:
         """Get a paper by ID."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM papers WHERE id = ?", (paper_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
             if row:
                 return self._row_to_paper(row)
             return None
@@ -306,9 +304,7 @@ class Database:
     def get_view(self, view_id: str) -> ClusterView | None:
         """Get a cluster view by ID."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM cluster_views WHERE id = ?", (view_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM cluster_views WHERE id = ?", (view_id,)).fetchone()
             if row:
                 return self._row_to_view(row)
             return None
@@ -316,9 +312,7 @@ class Database:
     def get_all_views(self) -> list[ClusterView]:
         """Get all cluster views."""
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM cluster_views ORDER BY created_at DESC"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM cluster_views ORDER BY created_at DESC").fetchall()
             return [self._row_to_view(row) for row in rows]
 
     def delete_view(self, view_id: str) -> None:
@@ -464,9 +458,9 @@ class Database:
                     "SELECT COUNT(*) FROM clusters WHERE view_id = ? AND parent_id IS NULL",
                     (view_id,),
                 ).fetchone()[0]
-            return conn.execute(
-                "SELECT COUNT(*) FROM clusters WHERE parent_id IS NULL"
-            ).fetchone()[0]
+            return conn.execute("SELECT COUNT(*) FROM clusters WHERE parent_id IS NULL").fetchone()[
+                0
+            ]
 
     def view_count(self) -> int:
         """Get the number of cluster views."""
@@ -478,7 +472,8 @@ class Database:
         with self._connect() as conn:
             # Get all cluster IDs for this view
             cluster_ids = [
-                row[0] for row in conn.execute(
+                row[0]
+                for row in conn.execute(
                     "SELECT id FROM clusters WHERE view_id = ?", (view_id,)
                 ).fetchall()
             ]
@@ -495,3 +490,19 @@ class Database:
                 "INSERT INTO cluster_papers (cluster_id, paper_id, position) VALUES (?, ?, 0)",
                 (target_cluster_id, paper_id),
             )
+
+    def rename_cluster(
+        self, cluster_id: str, new_name: str, new_description: str | None = None
+    ) -> None:
+        """Rename a cluster and optionally update its description."""
+        with self._connect() as conn:
+            if new_description is not None:
+                conn.execute(
+                    "UPDATE clusters SET name = ?, description = ? WHERE id = ?",
+                    (new_name, new_description, cluster_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE clusters SET name = ? WHERE id = ?",
+                    (new_name, cluster_id),
+                )

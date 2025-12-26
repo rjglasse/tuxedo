@@ -110,9 +110,7 @@ class TestProjectCreationWorkflow:
 class TestPdfProcessingWorkflow:
     """Test PDF processing with Grobid."""
 
-    def test_process_pdfs_and_store(
-        self, project_with_pdfs, sample_tei_xml, httpx_mock
-    ):
+    def test_process_pdfs_and_store(self, project_with_pdfs, sample_tei_xml, httpx_mock):
         """PDFs are processed and papers stored in database."""
         # Mock Grobid responses
         for _ in range(3):
@@ -143,11 +141,11 @@ class TestClusteringWorkflow:
         """Project with papers already added."""
         for i, pdf_path in enumerate(project_with_pdfs.list_pdfs()):
             paper = Paper(
-                id=f"paper{i+1}",
+                id=f"paper{i + 1}",
                 pdf_path=pdf_path,
-                title=f"Paper {i+1}: Machine Learning Applications",
-                authors=[Author(name=f"Author {i+1}")],
-                abstract=f"Abstract for paper {i+1}",
+                title=f"Paper {i + 1}: Machine Learning Applications",
+                authors=[Author(name=f"Author {i + 1}")],
+                abstract=f"Abstract for paper {i + 1}",
                 year=2024,
             )
             project_with_pdfs.add_paper(paper)
@@ -160,20 +158,22 @@ class TestClusteringWorkflow:
         mock_response.choices = [
             Mock(
                 message=Mock(
-                    content=json.dumps({
-                        "clusters": [
-                            {
-                                "name": "ML Applications",
-                                "description": "Papers about ML applications",
-                                "paper_ids": ["paper1", "paper2"],
-                            },
-                            {
-                                "name": "Deep Learning",
-                                "description": "Papers about DL",
-                                "paper_ids": ["paper3"],
-                            },
-                        ]
-                    })
+                    content=json.dumps(
+                        {
+                            "clusters": [
+                                {
+                                    "name": "ML Applications",
+                                    "description": "Papers about ML applications",
+                                    "paper_ids": ["paper1", "paper2"],
+                                },
+                                {
+                                    "name": "Deep Learning",
+                                    "description": "Papers about DL",
+                                    "paper_ids": ["paper3"],
+                                },
+                            ]
+                        }
+                    )
                 )
             )
         ]
@@ -218,13 +218,13 @@ class TestExportWorkflow:
         papers = []
         for i, pdf_path in enumerate(project_with_pdfs.list_pdfs()):
             paper = Paper(
-                id=f"paper{i+1}",
+                id=f"paper{i + 1}",
                 pdf_path=pdf_path,
-                title=f"Paper {i+1}: Research Topic",
-                authors=[Author(name=f"Smith{i+1}")],
-                abstract=f"Abstract for paper {i+1}",
+                title=f"Paper {i + 1}: Research Topic",
+                authors=[Author(name=f"Smith{i + 1}")],
+                abstract=f"Abstract for paper {i + 1}",
                 year=2024 - i,
-                doi=f"10.1234/paper{i+1}",
+                doi=f"10.1234/paper{i + 1}",
                 journal="Test Journal" if i == 0 else None,
                 booktitle="Test Conference" if i == 1 else None,
             )
@@ -292,12 +292,15 @@ class TestPaperEditWorkflow:
         project_with_pdfs.add_paper(paper)
 
         # Update metadata
-        project_with_pdfs.update_paper("paper1", {
-            "title": "Updated Title",
-            "year": 2024,
-            "doi": "10.1234/new",
-            "authors": [Author(name="New Author")],
-        })
+        project_with_pdfs.update_paper(
+            "paper1",
+            {
+                "title": "Updated Title",
+                "year": 2024,
+                "doi": "10.1234/new",
+                "authors": [Author(name="New Author")],
+            },
+        )
 
         # Verify updates
         papers = project_with_pdfs.get_papers()
@@ -316,10 +319,10 @@ class TestMultipleViewsWorkflow:
         """Project with papers."""
         for i in range(3):
             paper = Paper(
-                id=f"paper{i+1}",
+                id=f"paper{i + 1}",
                 pdf_path=project_with_pdfs.list_pdfs()[i],
-                title=f"Paper {i+1}",
-                authors=[Author(name=f"Author {i+1}")],
+                title=f"Paper {i + 1}",
+                authors=[Author(name=f"Author {i + 1}")],
                 year=2024,
             )
             project_with_pdfs.add_paper(paper)
@@ -331,14 +334,26 @@ class TestMultipleViewsWorkflow:
         view1 = project_with_papers.create_view("By Method", "Group by method")
         clusters1 = [
             Cluster(id="m1", name="Method A", description="", paper_ids=["paper1"], subclusters=[]),
-            Cluster(id="m2", name="Method B", description="", paper_ids=["paper2", "paper3"], subclusters=[]),
+            Cluster(
+                id="m2",
+                name="Method B",
+                description="",
+                paper_ids=["paper2", "paper3"],
+                subclusters=[],
+            ),
         ]
         project_with_papers.save_clusters(view1.id, clusters1)
 
         # Create second view with different clustering
         view2 = project_with_papers.create_view("By Year", "Group by year")
         clusters2 = [
-            Cluster(id="y1", name="2024", description="", paper_ids=["paper1", "paper2", "paper3"], subclusters=[]),
+            Cluster(
+                id="y1",
+                name="2024",
+                description="",
+                paper_ids=["paper1", "paper2", "paper3"],
+                subclusters=[],
+            ),
         ]
         project_with_papers.save_clusters(view2.id, clusters2)
 

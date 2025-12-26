@@ -506,7 +506,9 @@ class TestGrobidClientRetry:
         assert result.attempts == 2
         assert result.retried is True
 
-    def test_process_pdf_with_result_first_attempt_success(self, httpx_mock, tmp_pdf, sample_tei_xml):
+    def test_process_pdf_with_result_first_attempt_success(
+        self, httpx_mock, tmp_pdf, sample_tei_xml
+    ):
         """process_pdf_with_result should show no retry when first attempt succeeds."""
         httpx_mock.add_response(
             url="http://localhost:8070/api/processFulltextDocument",

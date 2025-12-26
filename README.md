@@ -41,11 +41,13 @@ uv run tuxedo view
 |---------|-------------|
 | `init <pdfs> -q "..."` | Create project from PDF folder |
 | `process` | Extract metadata via Grobid |
+| `process <file.pdf>` | Re-process a single PDF |
 | `cluster` | Cluster papers with LLM |
 | `view` | Interactive TUI |
 | `views` | List clustering views |
-| `export <view_id> -f bibtex` | Export to BibTeX/Markdown/JSON |
+| `export <view_id> -f FORMAT` | Export (bibtex, csv, ris, markdown, json, latex) |
 | `papers` | List all papers |
+| `delete-paper <id>` | Remove a paper from the project |
 | `status` | Show project info |
 
 ## TUI Keybindings
@@ -65,6 +67,8 @@ uv run tuxedo view
 | `p` | Open local PDF |
 | `m` | Move paper to different cluster |
 | `E` | Edit paper metadata |
+| `r` | Rename selected cluster |
+| `R` | Recluster with feedback |
 | `e` / `c` | Expand / Collapse all |
 | `?` | Show help |
 | `q` | Back |
@@ -86,6 +90,12 @@ uv run tuxedo export abc123 -f bibtex -o refs.bib
 
 # Markdown outline for writing
 uv run tuxedo export abc123 -f markdown -o outline.md
+
+# CSV for spreadsheets
+uv run tuxedo export abc123 -f csv -o papers.csv
+
+# RIS for reference managers (EndNote, Zotero, Mendeley)
+uv run tuxedo export abc123 -f ris -o papers.ris
 ```
 
 ## Project Structure

@@ -23,6 +23,7 @@ from tuxedo.grobid import (
     GrobidParsingError,
     GrobidProcessingError,
 )
+from tuxedo.models import Cluster, ClusterView, Paper
 from tuxedo.project import Project
 from tuxedo.tui import run_tui
 
@@ -38,8 +39,16 @@ def main():
 
 @main.command()
 @click.argument("source_pdfs", type=click.Path(exists=True, file_okay=False, path_type=Path))
-@click.option("-q", "--question", prompt="Research question", help="The research question guiding the review")
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None, help="Project directory (defaults to parent of SOURCE_PDFS)")
+@click.option(
+    "-q", "--question", prompt="Research question", help="The research question guiding the review"
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Project directory (defaults to parent of SOURCE_PDFS)",
+)
 @click.option("--grobid-url", default="http://localhost:8070", help="Grobid service URL")
 @click.option("--name", default=None, help="Project name (defaults to directory name)")
 def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str, name: str | None):
@@ -88,9 +97,15 @@ def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str,
 
 
 @main.command()
-@click.option("--max-retries", "-r", default=2, type=int, help="Maximum retry attempts per PDF (default: 2)")
-def process(max_retries: int):
+@click.argument("pdf_file", required=False, type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--max-retries", "-r", default=2, type=int, help="Maximum retry attempts per PDF (default: 2)"
+)
+def process(pdf_file: Path | None, max_retries: int):
     """Process PDFs using Grobid to extract content.
+
+    If PDF_FILE is provided, process only that file (can be used to re-process).
+    Otherwise, process all PDFs in the papers directory.
 
     Automatically retries failed PDFs with different Grobid configurations.
     Use 'tuxedo view' to manually repair papers that fail after all retries.
@@ -110,8 +125,17 @@ def process(max_retries: int):
             console.print("  docker run --rm -p 8070:8070 lfoppiano/grobid:0.8.0")
             raise click.Abort()
 
-        pdf_files = project.list_pdfs()
-        console.print(f"Processing {len(pdf_files)} PDFs (max {max_retries} retries per file)...")
+        # Determine which PDFs to process
+        if pdf_file:
+            pdf_files = [pdf_file]
+            console.print(
+                f"Re-processing [bold]{pdf_file.name}[/bold] (max {max_retries} retries)..."
+            )
+        else:
+            pdf_files = project.list_pdfs()
+            console.print(
+                f"Processing {len(pdf_files)} PDFs (max {max_retries} retries per file)..."
+            )
 
         success_count = 0
         retry_success_count = 0
@@ -150,7 +174,9 @@ def process(max_retries: int):
 
         # Summary
         if retry_success_count > 0:
-            console.print(f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green] ({retry_success_count} succeeded on retry)")
+            console.print(
+                f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green] ({retry_success_count} succeeded on retry)"
+            )
         else:
             console.print(f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green]")
 
@@ -160,12 +186,18 @@ def process(max_retries: int):
             for pdf_path, error, attempts in errors:
                 attempt_info = f"({attempts} attempts)" if attempts > 1 else ""
                 if isinstance(error, GrobidProcessingError) and error.status_code:
-                    console.print(f"  [dim]•[/dim] {pdf_path.name}: HTTP {error.status_code} {attempt_info}")
+                    console.print(
+                        f"  [dim]•[/dim] {pdf_path.name}: HTTP {error.status_code} {attempt_info}"
+                    )
                 elif isinstance(error, GrobidParsingError):
-                    console.print(f"  [dim]•[/dim] {pdf_path.name}: Invalid response {attempt_info}")
+                    console.print(
+                        f"  [dim]•[/dim] {pdf_path.name}: Invalid response {attempt_info}"
+                    )
                 else:
                     console.print(f"  [dim]•[/dim] {pdf_path.name}: {error} {attempt_info}")
-            console.print("\n[dim]Use 'tuxedo view' and press 'e' to manually edit paper metadata[/dim]")
+            console.print(
+                "\n[dim]Use 'tuxedo view' and press 'e' to manually edit paper metadata[/dim]"
+            )
 
         if success_count > 0:
             console.print("\n[dim]Run 'tuxedo cluster' to organize papers[/dim]")
@@ -173,20 +205,33 @@ def process(max_retries: int):
 
 @main.command()
 @click.option("--name", "-n", default=None, help="Name for this clustering view")
-@click.option("--prompt", "-p", default=None, help="Custom prompt for clustering (defaults to research question)")
+@click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Custom prompt for clustering (defaults to research question)",
+)
 @click.option("--model", default="gpt-5.2", help="OpenAI model to use")
 @click.option(
-    "--include-sections", "-s",
+    "--include-sections",
+    "-s",
     default=None,
     help="Comma-separated section patterns to include (e.g., 'method,methodology')",
 )
 @click.option(
-    "--batch-size", "-b",
+    "--batch-size",
+    "-b",
     default=None,
     type=int,
     help="Process papers in batches of this size to handle token limits (e.g., 10)",
 )
-def cluster(name: str | None, prompt: str | None, model: str, include_sections: str | None, batch_size: int | None):
+def cluster(
+    name: str | None,
+    prompt: str | None,
+    model: str,
+    include_sections: str | None,
+    batch_size: int | None,
+):
     """Cluster papers using LLM.
 
     Creates a new clustering view. You can have multiple views with different
@@ -211,14 +256,18 @@ def cluster(name: str | None, prompt: str | None, model: str, include_sections: 
     papers_without_title = [p for p in papers if not p.title or p.title == p.pdf_path.stem]
 
     if papers_without_title:
-        console.print(f"[yellow]Warning: {len(papers_without_title)} paper(s) have no extracted title[/yellow]")
+        console.print(
+            f"[yellow]Warning: {len(papers_without_title)} paper(s) have no extracted title[/yellow]"
+        )
         for p in papers_without_title[:3]:
             console.print(f"  [dim]• {p.pdf_path.name}[/dim]")
         if len(papers_without_title) > 3:
             console.print(f"  [dim]... and {len(papers_without_title) - 3} more[/dim]")
 
     if papers_without_abstract:
-        console.print(f"[yellow]Warning: {len(papers_without_abstract)} paper(s) have no abstract[/yellow]")
+        console.print(
+            f"[yellow]Warning: {len(papers_without_abstract)} paper(s) have no abstract[/yellow]"
+        )
         for p in papers_without_abstract[:3]:
             console.print(f"  [dim]• {p.display_title}[/dim]")
         if len(papers_without_abstract) > 3:
@@ -229,12 +278,20 @@ def cluster(name: str | None, prompt: str | None, model: str, include_sections: 
         console.print()  # Add spacing before continuing
 
     # Default name and prompt
+    existing_views = project.get_views()
     if not name:
-        existing_views = project.get_views()
         if not existing_views:
             name = "Research Question"
         else:
             name = f"View {len(existing_views) + 1}"
+
+    # Check for duplicate view name
+    existing_names = {v.name.lower() for v in existing_views}
+    if name.lower() in existing_names:
+        if not click.confirm(
+            f"A view named '{name}' already exists. Create another with the same name?"
+        ):
+            raise click.Abort()
 
     if not prompt:
         prompt = project.config.research_question
@@ -274,7 +331,8 @@ def cluster(name: str | None, prompt: str | None, model: str, include_sections: 
                 progress.update(task, completed=batch_num - 1, description=message)
 
             clusters = clusterer.cluster_papers(
-                papers, prompt,
+                papers,
+                prompt,
                 include_sections=section_patterns,
                 batch_size=batch_size,
                 progress_callback=progress_callback,
@@ -365,17 +423,50 @@ def delete_view(view_id: str, force: bool):
     console.print(f"[green]Deleted view '{view.name}'[/green]")
 
 
+@main.command("delete-paper")
+@click.argument("paper_id")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+def delete_paper(paper_id: str, force: bool):
+    """Delete a paper from the project.
+
+    PAPER_ID is the ID of the paper to delete (use 'tuxedo papers' to list).
+
+    This removes the paper from the database and all cluster associations.
+    The PDF file is NOT deleted.
+    """
+    project = Project.load()
+    if not project:
+        console.print("[red]No project found. Run 'tuxedo init' first.[/red]")
+        raise click.Abort()
+
+    paper = project.get_paper(paper_id)
+    if not paper:
+        console.print(f"[red]Paper '{paper_id}' not found.[/red]")
+        console.print("[dim]Use 'tuxedo papers' to list available papers.[/dim]")
+        raise click.Abort()
+
+    if not force:
+        console.print(f"[bold]{paper.title}[/bold]")
+        if not click.confirm("Delete this paper?"):
+            raise click.Abort()
+
+    project.delete_paper(paper_id)
+    console.print(f"[green]Deleted paper '{paper.display_title}'[/green]")
+
+
 @main.command()
 @click.argument("view_id")
 @click.option(
     "-f",
     "--format",
     "output_format",
-    type=click.Choice(["json", "markdown", "md", "bibtex", "bib", "latex", "tex"]),
+    type=click.Choice(["json", "markdown", "md", "bibtex", "bib", "latex", "tex", "csv", "ris"]),
     default="markdown",
     help="Output format (default: markdown)",
 )
-@click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file (default: stdout)")
+@click.option(
+    "-o", "--output", type=click.Path(path_type=Path), help="Output file (default: stdout)"
+)
 @click.option("-a", "--abstract", is_flag=True, help="Include abstracts in BibTeX export")
 def export(view_id: str, output_format: str, output: Path | None, abstract: bool):
     """Export a clustering view to file.
@@ -387,6 +478,8 @@ def export(view_id: str, output_format: str, output: Path | None, abstract: bool
       - json: Structured data for processing
       - bibtex/bib: Bibliography file for LaTeX
       - latex/tex: LaTeX skeleton with sections and citations
+      - csv: Spreadsheet-compatible format
+      - ris: Reference manager format (EndNote, Zotero, Mendeley)
     """
 
     project = Project.load()
@@ -409,6 +502,10 @@ def export(view_id: str, output_format: str, output: Path | None, abstract: bool
         result = _export_bibtex(view, clusters, papers_by_id, include_abstract=abstract)
     elif output_format in ("latex", "tex"):
         result = _export_latex(view, clusters, papers_by_id)
+    elif output_format == "csv":
+        result = _export_csv(view, clusters, papers_by_id)
+    elif output_format == "ris":
+        result = _export_ris(view, clusters, papers_by_id)
     else:  # markdown or md
         result = _export_markdown(view, clusters, papers_by_id)
 
@@ -419,7 +516,7 @@ def export(view_id: str, output_format: str, output: Path | None, abstract: bool
         console.print(result)
 
 
-def _export_json(view, clusters, papers_by_id) -> str:
+def _export_json(view: ClusterView, clusters: list[Cluster], papers_by_id: dict[str, Paper]) -> str:
     """Export view to JSON format."""
     import json
 
@@ -428,7 +525,9 @@ def _export_json(view, clusters, papers_by_id) -> str:
             {
                 "id": pid,
                 "title": papers_by_id[pid].title if pid in papers_by_id else "Unknown",
-                "authors": [a.name for a in papers_by_id[pid].authors] if pid in papers_by_id else [],
+                "authors": [a.name for a in papers_by_id[pid].authors]
+                if pid in papers_by_id
+                else [],
                 "year": papers_by_id[pid].year if pid in papers_by_id else None,
             }
             for pid in cluster.paper_ids
@@ -452,7 +551,9 @@ def _export_json(view, clusters, papers_by_id) -> str:
     return json.dumps(data, indent=2)
 
 
-def _export_markdown(view, clusters, papers_by_id) -> str:
+def _export_markdown(
+    view: ClusterView, clusters: list[Cluster], papers_by_id: dict[str, Paper]
+) -> str:
     """Export view to Markdown format."""
     lines = [
         f"# {view.name}",
@@ -493,7 +594,12 @@ def _export_markdown(view, clusters, papers_by_id) -> str:
     return "\n".join(lines)
 
 
-def _export_bibtex(view, clusters, papers_by_id, include_abstract: bool = False) -> str:
+def _export_bibtex(
+    view: ClusterView,
+    clusters: list[Cluster],
+    papers_by_id: dict[str, Paper],
+    include_abstract: bool = False,
+) -> str:
     """Export view to BibTeX format."""
     import re
 
@@ -622,7 +728,9 @@ def _export_bibtex(view, clusters, papers_by_id, include_abstract: bool = False)
     return "\n".join(entries)
 
 
-def _export_latex(view, clusters, papers_by_id) -> str:
+def _export_latex(
+    view: ClusterView, clusters: list[Cluster], papers_by_id: dict[str, Paper]
+) -> str:
     """Export view to LaTeX skeleton format."""
     import re
 
@@ -719,13 +827,160 @@ def _export_latex(view, clusters, papers_by_id) -> str:
     for cluster in clusters:
         render_cluster(cluster)
 
-    lines.extend([
-        "",
-        r"\bibliographystyle{plainnat}",
-        r"\bibliography{references}",
-        "",
-        r"\end{document}",
-    ])
+    lines.extend(
+        [
+            "",
+            r"\bibliographystyle{plainnat}",
+            r"\bibliography{references}",
+            "",
+            r"\end{document}",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def _export_csv(view: ClusterView, clusters: list[Cluster], papers_by_id: dict[str, Paper]) -> str:
+    """Export view to CSV format."""
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow(
+        [
+            "Cluster",
+            "Paper ID",
+            "Title",
+            "Authors",
+            "Year",
+            "DOI",
+            "Journal",
+            "Abstract",
+        ]
+    )
+
+    def write_cluster_papers(cluster, cluster_path=""):
+        """Write all papers in a cluster with hierarchical cluster path."""
+        current_path = f"{cluster_path} > {cluster.name}" if cluster_path else cluster.name
+
+        for pid in cluster.paper_ids:
+            if pid in papers_by_id:
+                paper = papers_by_id[pid]
+                authors = "; ".join(a.name for a in paper.authors)
+                writer.writerow(
+                    [
+                        current_path,
+                        paper.id,
+                        paper.title,
+                        authors,
+                        paper.year or "",
+                        paper.doi or "",
+                        paper.journal or paper.booktitle or "",
+                        paper.abstract or "",
+                    ]
+                )
+
+        for sub in cluster.subclusters:
+            write_cluster_papers(sub, current_path)
+
+    for cluster in clusters:
+        write_cluster_papers(cluster)
+
+    return output.getvalue()
+
+
+def _export_ris(view: ClusterView, clusters: list[Cluster], papers_by_id: dict[str, Paper]) -> str:
+    """Export view to RIS format for reference managers."""
+    lines = []
+    seen_ids = set()  # Avoid duplicates from multiple clusters
+
+    def write_paper(paper):
+        """Write a single paper in RIS format."""
+        if paper.id in seen_ids:
+            return
+        seen_ids.add(paper.id)
+
+        # Determine type
+        if paper.journal:
+            lines.append("TY  - JOUR")
+        elif paper.booktitle:
+            lines.append("TY  - CONF")
+        elif paper.arxiv_id:
+            lines.append("TY  - UNPB")
+        else:
+            lines.append("TY  - GEN")
+
+        # Title
+        lines.append(f"TI  - {paper.title}")
+
+        # Authors (one per line)
+        for author in paper.authors:
+            lines.append(f"AU  - {author.name}")
+
+        # Year
+        if paper.year:
+            lines.append(f"PY  - {paper.year}")
+
+        # Journal or booktitle
+        if paper.journal:
+            lines.append(f"JO  - {paper.journal}")
+        if paper.booktitle:
+            lines.append(f"T2  - {paper.booktitle}")
+
+        # Volume and issue
+        if paper.volume:
+            lines.append(f"VL  - {paper.volume}")
+        if paper.number:
+            lines.append(f"IS  - {paper.number}")
+
+        # Pages
+        if paper.pages:
+            if "-" in paper.pages:
+                start, end = paper.pages.split("-", 1)
+                lines.append(f"SP  - {start.strip()}")
+                lines.append(f"EP  - {end.strip()}")
+            else:
+                lines.append(f"SP  - {paper.pages}")
+
+        # DOI
+        if paper.doi:
+            lines.append(f"DO  - {paper.doi}")
+
+        # Abstract
+        if paper.abstract:
+            lines.append(f"AB  - {paper.abstract}")
+
+        # Keywords
+        for kw in paper.keywords:
+            lines.append(f"KW  - {kw}")
+
+        # URL or arXiv
+        if paper.url:
+            lines.append(f"UR  - {paper.url}")
+        elif paper.arxiv_id:
+            lines.append(f"UR  - https://arxiv.org/abs/{paper.arxiv_id}")
+
+        # Publisher
+        if paper.publisher:
+            lines.append(f"PB  - {paper.publisher}")
+
+        # End of record
+        lines.append("ER  - ")
+        lines.append("")
+
+    def process_cluster(cluster):
+        """Process all papers in a cluster."""
+        for pid in cluster.paper_ids:
+            if pid in papers_by_id:
+                write_paper(papers_by_id[pid])
+        for sub in cluster.subclusters:
+            process_cluster(sub)
+
+    for cluster in clusters:
+        process_cluster(cluster)
 
     return "\n".join(lines)
 

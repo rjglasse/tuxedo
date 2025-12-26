@@ -11,7 +11,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, Tree
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Select, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from tuxedo.clustering import PaperClusterer
@@ -251,7 +251,9 @@ class EditPaperDialog(ModalScreen[dict | None]):
             with Horizontal(classes="row"):
                 with Vertical():
                     yield Label("Year", classes="field-label")
-                    yield Input(value=str(self.paper.year) if self.paper.year else "", id="edit-year")
+                    yield Input(
+                        value=str(self.paper.year) if self.paper.year else "", id="edit-year"
+                    )
                 with Vertical():
                     yield Label("DOI", classes="field-label")
                     yield Input(value=self.paper.doi or "", id="edit-doi")
@@ -313,7 +315,9 @@ class EditPaperDialog(ModalScreen[dict | None]):
         # Authors
         authors_str = self.query_one("#edit-authors", Input).value.strip()
         if authors_str:
-            new_authors = [Author(name=name.strip()) for name in authors_str.split(",") if name.strip()]
+            new_authors = [
+                Author(name=name.strip()) for name in authors_str.split(",") if name.strip()
+            ]
             current_authors = [a.name for a in self.paper.authors]
             new_author_names = [a.name for a in new_authors]
             if new_author_names != current_authors:
@@ -397,6 +401,160 @@ class EditPaperDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class ReclusterDialog(ModalScreen[str | None]):
+    """A modal dialog for providing recluster feedback."""
+
+    CSS = """
+    ReclusterDialog {
+        align: center middle;
+    }
+
+    #recluster-dialog {
+        width: 80;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #recluster-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #recluster-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #recluster-dialog Input {
+        margin-bottom: 1;
+    }
+
+    #recluster-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #recluster-dialog Button {
+        margin-right: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="recluster-dialog"):
+            yield Label("Recluster with Feedback", classes="title")
+            yield Label("Describe how you'd like the clusters reorganized:", classes="hint")
+            yield Input(
+                placeholder="e.g., 'Merge the ML and DL clusters' or 'Split methodology by quantitative/qualitative'",
+                id="feedback-input",
+            )
+            with Horizontal(classes="buttons"):
+                yield Button("Recluster", variant="primary", id="recluster-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#feedback-input", Input).focus()
+
+    @on(Button.Pressed, "#recluster-btn")
+    def on_recluster(self) -> None:
+        feedback = self.query_one("#feedback-input", Input).value.strip()
+        if feedback:
+            self.dismiss(feedback)
+        else:
+            self.notify("Please provide feedback", severity="warning")
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
+class RenameClusterDialog(ModalScreen[dict | None]):
+    """A modal dialog for renaming a cluster."""
+
+    CSS = """
+    RenameClusterDialog {
+        align: center middle;
+    }
+
+    #rename-dialog {
+        width: 80;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #rename-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #rename-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #rename-dialog .field-label {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    #rename-dialog Input {
+        margin-bottom: 1;
+    }
+
+    #rename-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #rename-dialog Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, cluster: Cluster):
+        super().__init__()
+        self.cluster = cluster
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-dialog"):
+            yield Label("Rename Cluster", classes="title")
+            yield Label(f"Editing: {self.cluster.name}", classes="hint")
+            yield Label("Name", classes="field-label")
+            yield Input(value=self.cluster.name, id="rename-name")
+            yield Label("Description", classes="field-label")
+            yield Input(value=self.cluster.description or "", id="rename-description")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#rename-name", Input).focus()
+
+    @on(Button.Pressed, "#save-btn")
+    def on_save(self) -> None:
+        name = self.query_one("#rename-name", Input).value.strip()
+        description = self.query_one("#rename-description", Input).value.strip()
+
+        if not name:
+            self.notify("Name cannot be empty", severity="warning")
+            return
+
+        result = {"name": name}
+        if description != (self.cluster.description or ""):
+            result["description"] = description or None
+
+        self.dismiss(result)
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class CreateClusterDialog(ModalScreen[dict | None]):
     """A modal dialog for creating a new cluster view."""
 
@@ -449,9 +607,16 @@ class CreateClusterDialog(ModalScreen[dict | None]):
             yield Label("Create New Clustering View", classes="title")
             yield Label("Different prompts organize papers in different ways", classes="hint")
             yield Input(placeholder="View name (e.g., 'By Methodology')", id="new-view-name")
-            yield Input(placeholder="Clustering prompt (leave empty for research question)", id="new-view-prompt")
-            yield Input(placeholder="Include sections (e.g., 'method,results')", id="new-view-sections")
-            yield Input(placeholder="Batch size (e.g., 10) for large paper sets", id="new-view-batch")
+            yield Input(
+                placeholder="Clustering prompt (leave empty for research question)",
+                id="new-view-prompt",
+            )
+            yield Input(
+                placeholder="Include sections (e.g., 'method,results')", id="new-view-sections"
+            )
+            yield Input(
+                placeholder="Batch size (e.g., 10) for large paper sets", id="new-view-batch"
+            )
             yield Select(
                 [(label, value) for value, label in MODEL_OPTIONS],
                 value="gpt-5.2",
@@ -482,13 +647,15 @@ class CreateClusterDialog(ModalScreen[dict | None]):
             except ValueError:
                 pass
 
-        self.dismiss({
-            "name": name,
-            "prompt": prompt or self.default_prompt,
-            "sections": sections,
-            "model": model,
-            "batch_size": batch_size,
-        })
+        self.dismiss(
+            {
+                "name": name,
+                "prompt": prompt or self.default_prompt,
+                "sections": sections,
+                "model": model,
+                "batch_size": batch_size,
+            }
+        )
 
     @on(Button.Pressed, "#cancel-btn")
     def on_cancel(self) -> None:
@@ -513,7 +680,9 @@ class ViewListItem(ListItem):
 
     def compose(self) -> ComposeResult:
         yield Label(f"[bold]{self.view.name}[/bold]")
-        prompt_short = self.view.prompt[:50] + "..." if len(self.view.prompt) > 50 else self.view.prompt
+        prompt_short = (
+            self.view.prompt[:50] + "..." if len(self.view.prompt) > 50 else self.view.prompt
+        )
         yield Label(f"[dim]{self.cluster_count} clusters | {prompt_short}[/dim]")
 
 
@@ -526,7 +695,19 @@ class NewViewItem(ListItem):
 
 
 class ViewSelectionScreen(Screen):
-    """Screen for selecting or creating a cluster view."""
+    """Screen for selecting or creating a cluster view.
+
+    This is the initial screen shown when launching the TUI. It displays
+    a list of existing clustering views and allows users to:
+    - Select a view to explore its clusters
+    - Create a new clustering view with custom prompts
+    - Delete existing views
+
+    Bindings:
+        n: Create a new clustering view
+        d: Delete the selected view
+        q: Quit the application
+    """
 
     BINDINGS = [
         Binding("q", "quit", "Quit", priority=True),
@@ -591,6 +772,7 @@ class ViewSelectionScreen(Screen):
             paper_count = self.project.paper_count()
             yield Static(f"[dim]{paper_count} papers in project[/dim]", classes="subtitle")
             yield ListView(id="view-list")
+        yield Footer()
 
     def on_mount(self) -> None:
         self._refresh_list()
@@ -618,6 +800,7 @@ class ViewSelectionScreen(Screen):
 
     def action_new_view(self) -> None:
         """Show the create cluster dialog."""
+
         def handle_create(result: dict | None) -> None:
             if result:
                 self._create_new_view(result)
@@ -668,7 +851,9 @@ class ViewSelectionScreen(Screen):
             name = f"View {len(views) + 1}"
 
         if batch_size:
-            self.app.call_from_thread(self.notify, f"Clustering with {model} (batch size: {batch_size})...")
+            self.app.call_from_thread(
+                self.notify, f"Clustering with {model} (batch size: {batch_size})..."
+            )
         else:
             self.app.call_from_thread(self.notify, f"Clustering with {model}...")
 
@@ -688,7 +873,8 @@ class ViewSelectionScreen(Screen):
                 self.app.call_from_thread(self.notify, message)
 
             clusters = clusterer.cluster_papers(
-                papers, prompt,
+                papers,
+                prompt,
                 include_sections=section_patterns,
                 batch_size=batch_size,
                 progress_callback=progress_callback if batch_size else None,
@@ -696,7 +882,9 @@ class ViewSelectionScreen(Screen):
             self.project.save_clusters(view.id, clusters)
 
             self.app.call_from_thread(self._refresh_list)
-            self.app.call_from_thread(self.notify, f"Created '{name}' with {len(clusters)} clusters")
+            self.app.call_from_thread(
+                self.notify, f"Created '{name}' with {len(clusters)} clusters"
+            )
         except Exception as e:
             self.app.call_from_thread(self.notify, f"Failed to create view: {e}", severity="error")
 
@@ -778,7 +966,17 @@ class PaperDetail(Static):
 
 
 class ClusterTree(Tree):
-    """Tree widget for displaying paper clusters."""
+    """Tree widget for displaying paper clusters hierarchically.
+
+    Displays clusters as expandable tree nodes with papers as leaves.
+    Supports filtering by title, author, abstract, and keywords.
+    Papers are sorted alphabetically within each cluster.
+
+    Attributes:
+        all_papers: List of all papers in the view
+        clusters: List of top-level clusters
+        filter_text: Current search filter text
+    """
 
     BINDINGS = [
         Binding("right", "expand_node", "Expand", show=False),
@@ -803,7 +1001,9 @@ class ClusterTree(Tree):
     }
     """
 
-    def __init__(self, view_name: str, papers: list[Paper], clusters: list[Cluster], filter_text: str = ""):
+    def __init__(
+        self, view_name: str, papers: list[Paper], clusters: list[Cluster], filter_text: str = ""
+    ):
         super().__init__(view_name)
         self.all_papers = papers
         self.clusters = clusters
@@ -831,13 +1031,18 @@ class ClusterTree(Tree):
         # Add uncategorized papers (sorted alphabetically)
         uncategorized = sorted(
             [p for p in self.all_papers if p.id not in used_paper_ids and self._matches_filter(p)],
-            key=lambda p: p.title.lower()
+            key=lambda p: p.title.lower(),
         )
         if uncategorized:
-            node = self.root.add(f"[bold italic]Uncategorized[/bold italic] ({len(uncategorized)})", data={"type": "uncategorized"})
+            node = self.root.add(
+                f"[bold italic]Uncategorized[/bold italic] ({len(uncategorized)})",
+                data={"type": "uncategorized"},
+            )
             for paper in uncategorized:
                 year_suffix = f" [{paper.year}]" if paper.year else ""
-                node.add_leaf(f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper})
+                node.add_leaf(
+                    f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper}
+                )
 
     def _collect_used_papers(self, clusters: list[Cluster], used: set[str]) -> None:
         """Recursively collect all paper IDs used in clusters."""
@@ -898,7 +1103,8 @@ class ClusterTree(Tree):
     def _add_cluster_node(self, parent: TreeNode, cluster: Cluster) -> None:
         # Filter papers
         matching_papers = [
-            pid for pid in cluster.paper_ids
+            pid
+            for pid in cluster.paper_ids
             if pid in self._paper_map and self._matches_filter(self._paper_map[pid])
         ]
 
@@ -906,7 +1112,8 @@ class ClusterTree(Tree):
         total = len(matching_papers)
         for sub in cluster.subclusters:
             sub_matching = [
-                pid for pid in sub.paper_ids
+                pid
+                for pid in sub.paper_ids
                 if pid in self._paper_map and self._matches_filter(self._paper_map[pid])
             ]
             total += len(sub_matching)
@@ -915,16 +1122,19 @@ class ClusterTree(Tree):
         if self.filter_text and total == 0:
             return
 
-        node = parent.add(f"[bold]{cluster.name}[/bold] ({total})", data={"type": "cluster", "cluster": cluster})
+        node = parent.add(
+            f"[bold]{cluster.name}[/bold] ({total})", data={"type": "cluster", "cluster": cluster}
+        )
 
         # Sort papers alphabetically by title
         sorted_papers = sorted(
-            [self._paper_map[pid] for pid in matching_papers],
-            key=lambda p: p.title.lower()
+            [self._paper_map[pid] for pid in matching_papers], key=lambda p: p.title.lower()
         )
         for paper in sorted_papers:
             year_suffix = f" [{paper.year}]" if paper.year else ""
-            node.add_leaf(f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper})
+            node.add_leaf(
+                f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper}
+            )
 
         for subcluster in cluster.subclusters:
             self._add_cluster_node(node, subcluster)
@@ -933,6 +1143,12 @@ class ClusterTree(Tree):
         node = self.cursor_node
         if node and node.data and node.data.get("type") == "paper":
             return node.data.get("paper")
+        return None
+
+    def get_selected_cluster(self) -> Cluster | None:
+        node = self.cursor_node
+        if node and node.data and node.data.get("type") == "cluster":
+            return node.data.get("cluster")
         return None
 
     def refresh_filter(self, filter_text: str) -> None:
@@ -961,7 +1177,24 @@ class ClusterTree(Tree):
 
 
 class ClusterScreen(Screen):
-    """Screen for viewing clusters in a specific view."""
+    """Screen for viewing and managing clusters in a specific view.
+
+    This screen displays a tree view of clusters on the left and paper
+    details on the right. Users can navigate clusters, search papers,
+    and perform various actions on papers and clusters.
+
+    Bindings:
+        /: Open search to filter papers
+        o: Open paper's DOI or search Google Scholar
+        p: Open the local PDF file
+        m: Move paper to a different cluster
+        E: Edit paper metadata
+        r: Rename the selected cluster
+        R: Recluster papers with feedback
+        e: Expand all tree nodes
+        c: Collapse all tree nodes
+        q: Go back to view selection
+    """
 
     BINDINGS = [
         Binding("q", "back", "Back", priority=True),
@@ -969,6 +1202,8 @@ class ClusterScreen(Screen):
         Binding("p", "open_pdf", "PDF"),
         Binding("m", "move_paper", "Move"),
         Binding("E", "edit_paper", "Edit"),
+        Binding("r", "rename_cluster", "Rename"),
+        Binding("R", "recluster", "Recluster"),
         Binding("/", "search", "Search", priority=True),
         Binding("escape", "clear_search", "Clear", show=False),
         Binding("e", "expand_all", "Expand"),
@@ -1006,13 +1241,6 @@ class ClusterScreen(Screen):
         dock: top;
     }
 
-    ClusterScreen .status-bar {
-        color: $text-muted;
-        padding: 0 2;
-        height: 1;
-        dock: bottom;
-    }
-
     ClusterScreen #search-container {
         display: none;
         dock: top;
@@ -1041,9 +1269,14 @@ class ClusterScreen(Screen):
         self._filter_text = ""
 
     def compose(self) -> ComposeResult:
-        yield Static(f"[bold]{self.view.name}[/bold] | {self.view.prompt[:60]}...", classes="view-header")
+        yield Static(
+            f"[bold]{self.view.name}[/bold] | {self.view.prompt[:60]}... | {len(self.papers)} papers, {len(self.clusters)} clusters",
+            classes="view-header",
+        )
         with Container(id="search-container"):
-            yield Input(placeholder="Search papers by title, author, abstract...", id="search-input")
+            yield Input(
+                placeholder="Search papers by title, author, abstract...", id="search-input"
+            )
         with Horizontal(id="main-container"):
             with Vertical(id="tree-container"):
                 self._tree = ClusterTree(self.view.name, self.papers, self.clusters)
@@ -1051,7 +1284,7 @@ class ClusterScreen(Screen):
             with Vertical(id="detail-container"):
                 with Container(id="paper-detail-wrapper") as self._detail:
                     yield PaperDetail()
-        yield Static(f"{len(self.papers)} papers | {len(self.clusters)} clusters | Press / to search", classes="status-bar")
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the tree when screen opens."""
@@ -1220,9 +1453,81 @@ class ClusterScreen(Screen):
 
         self.app.push_screen(EditPaperDialog(paper), handle_edit)
 
+    def action_recluster(self) -> None:
+        """Recluster papers with feedback."""
+        if not self.clusters:
+            self.notify("No clusters to reorganize", severity="warning")
+            return
+
+        def handle_feedback(feedback: str | None) -> None:
+            if feedback:
+                self._do_recluster(feedback)
+
+        self.app.push_screen(ReclusterDialog(), handle_feedback)
+
+    @work(thread=True)
+    def _do_recluster(self, feedback: str) -> None:
+        """Perform reclustering in background thread."""
+        self.app.call_from_thread(self.notify, "Reclustering papers...")
+
+        try:
+            clusterer = PaperClusterer()
+            new_clusters = clusterer.recluster(
+                papers=self.papers,
+                research_question=self.project.config.research_question,
+                feedback=feedback,
+                current_clusters=self.clusters,
+            )
+
+            # Save new clusters
+            self.project.save_clusters(self.view.id, new_clusters)
+            self.clusters = new_clusters
+
+            # Update tree on main thread
+            def refresh_tree() -> None:
+                if self._tree:
+                    self._tree.clusters = self.clusters
+                    self._tree._build_tree()
+                    self._tree.root.expand()
+
+            self.app.call_from_thread(refresh_tree)
+            self.app.call_from_thread(self.notify, f"Reclustered into {len(new_clusters)} clusters")
+        except Exception as e:
+            self.app.call_from_thread(self.notify, f"Recluster failed: {e}", severity="error")
+
+    def action_rename_cluster(self) -> None:
+        """Rename the selected cluster."""
+        if not self._tree:
+            return
+
+        cluster = self._tree.get_selected_cluster()
+        if not cluster:
+            self.notify("Select a cluster to rename", severity="warning")
+            return
+
+        def handle_rename(result: dict | None) -> None:
+            if result and cluster:
+                new_name = result["name"]
+                new_description = result.get("description")
+                self.project.rename_cluster(cluster.id, new_name, new_description)
+
+                # Update local cluster object
+                cluster.name = new_name
+                if new_description is not None:
+                    cluster.description = new_description
+
+                # Refresh tree, preserving expanded state
+                if self._tree:
+                    expanded = self._tree.get_expanded_state()
+                    self._tree._build_tree()
+                    self._tree.restore_expanded_state(expanded)
+                self.notify(f"Renamed cluster to '{new_name}'")
+
+        self.app.push_screen(RenameClusterDialog(cluster), handle_rename)
+
     def action_help(self) -> None:
         self.notify(
-            "/ Search | o Web | p PDF | m Move | E Edit | e/c Expand/Collapse | q Back",
+            "Tip: Select a paper for o/p/m/E actions, or a cluster for r/R actions",
             timeout=5,
         )
 
@@ -1233,7 +1538,14 @@ class ClusterScreen(Screen):
 
 
 class TuxedoApp(App):
-    """Main TUI application."""
+    """Main TUI application for exploring literature review clusters.
+
+    The application uses a screen-based navigation:
+    1. ViewSelectionScreen: Choose or create clustering views
+    2. ClusterScreen: Explore papers within a specific view
+
+    Always uses dark mode for consistent appearance.
+    """
 
     TITLE = "Tuxedo"
     dark = True  # Always use dark mode

@@ -103,9 +103,7 @@ class TestDatabaseSchema:
     def test_creates_tables(self, db):
         """All required tables are created."""
         with db._connect() as conn:
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             table_names = {row[0] for row in tables}
 
         assert "papers" in table_names
@@ -218,8 +216,7 @@ class TestPaperOperations:
         # Paper should be removed from cluster_papers
         with db._connect() as conn:
             count = conn.execute(
-                "SELECT COUNT(*) FROM cluster_papers WHERE paper_id = ?",
-                ("paper1",)
+                "SELECT COUNT(*) FROM cluster_papers WHERE paper_id = ?", ("paper1",)
             ).fetchone()[0]
         assert count == 0
 
@@ -242,12 +239,15 @@ class TestPaperOperations:
     def test_update_paper_multiple_fields(self, db, sample_paper):
         """Multiple fields can be updated at once."""
         db.add_paper(sample_paper)
-        db.update_paper("paper1", {
-            "title": "Updated Title",
-            "abstract": "New abstract",
-            "doi": "10.9999/new",
-            "journal": "New Journal",
-        })
+        db.update_paper(
+            "paper1",
+            {
+                "title": "Updated Title",
+                "abstract": "New abstract",
+                "doi": "10.9999/new",
+                "journal": "New Journal",
+            },
+        )
 
         paper = db.get_paper("paper1")
         assert paper.title == "Updated Title"
@@ -258,9 +258,7 @@ class TestPaperOperations:
     def test_update_paper_authors(self, db, sample_paper):
         """Paper authors can be updated."""
         db.add_paper(sample_paper)
-        db.update_paper("paper1", {
-            "authors": [Author(name="Alice", affiliation="Stanford")]
-        })
+        db.update_paper("paper1", {"authors": [Author(name="Alice", affiliation="Stanford")]})
 
         paper = db.get_paper("paper1")
         assert len(paper.authors) == 1
@@ -407,8 +405,12 @@ class TestClusterOperations:
         db.create_view(sample_view)
 
         clusters = [
-            Cluster(id="c1", name="Cluster 1", description="", paper_ids=["paper1"], subclusters=[]),
-            Cluster(id="c2", name="Cluster 2", description="", paper_ids=["paper2"], subclusters=[]),
+            Cluster(
+                id="c1", name="Cluster 1", description="", paper_ids=["paper1"], subclusters=[]
+            ),
+            Cluster(
+                id="c2", name="Cluster 2", description="", paper_ids=["paper2"], subclusters=[]
+            ),
         ]
         db.save_clusters("view1", clusters)
 

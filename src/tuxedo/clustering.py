@@ -182,7 +182,9 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
 
         for batch_num, batch in enumerate(batches, 1):
             if progress_callback:
-                progress_callback(batch_num, total_batches, f"Processing batch {batch_num}/{total_batches}")
+                progress_callback(
+                    batch_num, total_batches, f"Processing batch {batch_num}/{total_batches}"
+                )
 
             paper_summaries = self._build_paper_summaries(batch, include_sections)
 
@@ -220,8 +222,7 @@ Create a hierarchical structure for these {len(batch)} papers that would support
             else:
                 # Subsequent batches: assign to existing themes or create new ones
                 existing_themes = [
-                    {"name": name, "description": desc}
-                    for name, desc in theme_descriptions.items()
+                    {"name": name, "description": desc} for name, desc in theme_descriptions.items()
                 ]
 
                 user_prompt = f"""Research Question: {research_question}

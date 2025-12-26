@@ -315,6 +315,19 @@ class TestProjectPaperMethods:
 
         assert path == created_project.papers_dir / "paper1.pdf"
 
+    def test_update_paper(self, created_project, sample_paper):
+        """Papers can be updated via project."""
+        created_project.add_paper(sample_paper)
+
+        created_project.update_paper("paper1", {
+            "title": "Updated Title",
+            "year": 2025,
+        })
+
+        papers = created_project.get_papers()
+        assert papers[0].title == "Updated Title"
+        assert papers[0].year == 2025
+
 
 class TestProjectViewMethods:
     """Tests for Project cluster view operations."""

@@ -177,11 +177,13 @@ class TestGrobidClientProcessPdf:
 
     def test_process_pdf_http_error(self, httpx_mock, tmp_pdf):
         """process_pdf should raise GrobidProcessingError on HTTP error."""
-        httpx_mock.add_response(
-            url="http://localhost:8070/api/processFulltextDocument",
-            content="Internal Server Error",
-            status_code=500,
-        )
+        # Mock responses for initial attempt + 2 retries (3 total)
+        for _ in range(3):
+            httpx_mock.add_response(
+                url="http://localhost:8070/api/processFulltextDocument",
+                content="Internal Server Error",
+                status_code=500,
+            )
 
         with GrobidClient("http://localhost:8070") as client:
             with pytest.raises(GrobidProcessingError) as exc_info:
@@ -337,17 +339,19 @@ class TestGrobidClientProcessDirectory:
         (tmp_path / "good.pdf").write_bytes(b"%PDF-1.4 good content")
         (tmp_path / "bad.pdf").write_bytes(b"%PDF-1.4 bad content")
 
-        # First call succeeds, second fails
+        # First call succeeds, second fails (plus retries)
         httpx_mock.add_response(
             url="http://localhost:8070/api/processFulltextDocument",
             content=sample_tei_xml,
             status_code=200,
         )
-        httpx_mock.add_response(
-            url="http://localhost:8070/api/processFulltextDocument",
-            content="Error",
-            status_code=500,
-        )
+        # Add 500 responses for all retry attempts (initial + 2 retries)
+        for _ in range(3):
+            httpx_mock.add_response(
+                url="http://localhost:8070/api/processFulltextDocument",
+                content="Error",
+                status_code=500,
+            )
 
         with GrobidClient("http://localhost:8070") as client:
             results = client.process_directory(tmp_path)
@@ -374,17 +378,19 @@ class TestGrobidClientProcessDirectory:
         (tmp_path / "good.pdf").write_bytes(b"%PDF-1.4 good content")
         (tmp_path / "bad.pdf").write_bytes(b"%PDF-1.4 bad content")
 
-        # First succeeds, second fails
+        # First succeeds, second fails (plus retries)
         httpx_mock.add_response(
             url="http://localhost:8070/api/processFulltextDocument",
             content=sample_tei_xml,
             status_code=200,
         )
-        httpx_mock.add_response(
-            url="http://localhost:8070/api/processFulltextDocument",
-            content="Error",
-            status_code=500,
-        )
+        # Add 500 responses for all retry attempts (initial + 2 retries)
+        for _ in range(3):
+            httpx_mock.add_response(
+                url="http://localhost:8070/api/processFulltextDocument",
+                content="Error",
+                status_code=500,
+            )
 
         with GrobidClient("http://localhost:8070") as client:
             papers = client.process_directory_papers(tmp_path)
@@ -410,3 +416,107 @@ class TestGrobidClientContextManager:
         """URL trailing slash should be stripped."""
         client = GrobidClient("http://localhost:8070/")
         assert client.base_url == "http://localhost:8070"
+
+
+class TestGrobidClientRetry:
+    """Tests for GrobidClient retry logic."""
+
+    def test_retry_success_on_second_attempt(self, httpx_mock, tmp_pdf, sample_tei_xml):
+        """process_pdf should succeed after retry."""
+        # First attempt fails, second succeeds
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Server Error",
+            status_code=500,
+        )
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            paper = client.process_pdf(tmp_pdf, max_retries=2)
+
+        assert paper.title == "Deep Learning for Natural Language Processing: A Survey"
+
+    def test_no_retry_on_client_error(self, httpx_mock, tmp_pdf):
+        """process_pdf should not retry on 4xx errors (except 400)."""
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Not Found",
+            status_code=404,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            with pytest.raises(GrobidProcessingError) as exc_info:
+                client.process_pdf(tmp_pdf, max_retries=2)
+            assert exc_info.value.status_code == 404
+
+    def test_retry_on_400_error(self, httpx_mock, tmp_pdf, sample_tei_xml):
+        """process_pdf should retry on 400 errors (possible parameter issue)."""
+        # First attempt fails with 400, retry with different params succeeds
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Bad Request",
+            status_code=400,
+        )
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            paper = client.process_pdf(tmp_pdf, max_retries=2)
+
+        assert paper.title == "Deep Learning for Natural Language Processing: A Survey"
+
+    def test_max_retries_zero_no_retry(self, httpx_mock, tmp_pdf):
+        """process_pdf should not retry when max_retries is 0."""
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Server Error",
+            status_code=500,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            with pytest.raises(GrobidProcessingError) as exc_info:
+                client.process_pdf(tmp_pdf, max_retries=0)
+            assert exc_info.value.status_code == 500
+
+    def test_process_pdf_with_result_tracks_retry(self, httpx_mock, tmp_pdf, sample_tei_xml):
+        """process_pdf_with_result should track retry attempts."""
+        # First attempt fails, second succeeds
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Server Error",
+            status_code=500,
+        )
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            result = client.process_pdf_with_result(tmp_pdf, max_retries=2)
+
+        assert result.success
+        assert result.attempts == 2
+        assert result.retried is True
+
+    def test_process_pdf_with_result_first_attempt_success(self, httpx_mock, tmp_pdf, sample_tei_xml):
+        """process_pdf_with_result should show no retry when first attempt succeeds."""
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+
+        with GrobidClient("http://localhost:8070") as client:
+            result = client.process_pdf_with_result(tmp_pdf, max_retries=2)
+
+        assert result.success
+        assert result.attempts == 1
+        assert result.retried is False

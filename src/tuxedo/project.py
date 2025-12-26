@@ -167,6 +167,15 @@ class Project:
         """Get number of processed papers."""
         return self.db.paper_count()
 
+    def update_paper(self, paper_id: str, updates: dict) -> None:
+        """Update paper metadata.
+
+        Args:
+            paper_id: The ID of the paper to update
+            updates: Dictionary of field names to new values
+        """
+        self.db.update_paper(paper_id, updates)
+
     # Cluster View methods
 
     def create_view(self, name: str, prompt: str) -> ClusterView:

@@ -174,6 +174,229 @@ class ConfirmDialog(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class EditPaperDialog(ModalScreen[dict | None]):
+    """A modal dialog for editing paper metadata."""
+
+    CSS = """
+    EditPaperDialog {
+        align: center middle;
+    }
+
+    #edit-dialog {
+        width: 90;
+        height: auto;
+        max-height: 90%;
+        background: $surface;
+        padding: 1 2;
+        overflow-y: auto;
+    }
+
+    #edit-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #edit-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #edit-dialog .field-label {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    #edit-dialog Input {
+        margin-bottom: 0;
+    }
+
+    #edit-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #edit-dialog Button {
+        margin-right: 1;
+    }
+
+    #edit-dialog .row {
+        layout: horizontal;
+        height: auto;
+    }
+
+    #edit-dialog .row > Vertical {
+        width: 1fr;
+        padding-right: 1;
+    }
+    """
+
+    def __init__(self, paper: Paper):
+        super().__init__()
+        self.paper = paper
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="edit-dialog"):
+            yield Label("Edit Paper Metadata", classes="title")
+            yield Label(f"Editing: {self.paper.title[:60]}...", classes="hint")
+
+            yield Label("Title", classes="field-label")
+            yield Input(value=self.paper.title, id="edit-title")
+
+            yield Label("Authors (comma-separated)", classes="field-label")
+            authors_str = ", ".join(a.name for a in self.paper.authors)
+            yield Input(value=authors_str, id="edit-authors")
+
+            yield Label("Abstract", classes="field-label")
+            yield Input(value=self.paper.abstract or "", id="edit-abstract")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("Year", classes="field-label")
+                    yield Input(value=str(self.paper.year) if self.paper.year else "", id="edit-year")
+                with Vertical():
+                    yield Label("DOI", classes="field-label")
+                    yield Input(value=self.paper.doi or "", id="edit-doi")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("Journal", classes="field-label")
+                    yield Input(value=self.paper.journal or "", id="edit-journal")
+                with Vertical():
+                    yield Label("Booktitle", classes="field-label")
+                    yield Input(value=self.paper.booktitle or "", id="edit-booktitle")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("Publisher", classes="field-label")
+                    yield Input(value=self.paper.publisher or "", id="edit-publisher")
+                with Vertical():
+                    yield Label("Volume", classes="field-label")
+                    yield Input(value=self.paper.volume or "", id="edit-volume")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("Number/Issue", classes="field-label")
+                    yield Input(value=self.paper.number or "", id="edit-number")
+                with Vertical():
+                    yield Label("Pages", classes="field-label")
+                    yield Input(value=self.paper.pages or "", id="edit-pages")
+
+            with Horizontal(classes="row"):
+                with Vertical():
+                    yield Label("arXiv ID", classes="field-label")
+                    yield Input(value=self.paper.arxiv_id or "", id="edit-arxiv")
+                with Vertical():
+                    yield Label("URL", classes="field-label")
+                    yield Input(value=self.paper.url or "", id="edit-url")
+
+            yield Label("Keywords (comma-separated)", classes="field-label")
+            keywords_str = ", ".join(self.paper.keywords)
+            yield Input(value=keywords_str, id="edit-keywords")
+
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#edit-title", Input).focus()
+
+    @on(Button.Pressed, "#save-btn")
+    def on_save(self) -> None:
+        from tuxedo.models import Author
+
+        updates = {}
+
+        # Title
+        title = self.query_one("#edit-title", Input).value.strip()
+        if title and title != self.paper.title:
+            updates["title"] = title
+
+        # Authors
+        authors_str = self.query_one("#edit-authors", Input).value.strip()
+        if authors_str:
+            new_authors = [Author(name=name.strip()) for name in authors_str.split(",") if name.strip()]
+            current_authors = [a.name for a in self.paper.authors]
+            new_author_names = [a.name for a in new_authors]
+            if new_author_names != current_authors:
+                updates["authors"] = new_authors
+
+        # Abstract
+        abstract = self.query_one("#edit-abstract", Input).value.strip()
+        if abstract != (self.paper.abstract or ""):
+            updates["abstract"] = abstract or None
+
+        # Year
+        year_str = self.query_one("#edit-year", Input).value.strip()
+        if year_str:
+            try:
+                year = int(year_str)
+                if year != self.paper.year:
+                    updates["year"] = year
+            except ValueError:
+                pass
+        elif self.paper.year:
+            updates["year"] = None
+
+        # DOI
+        doi = self.query_one("#edit-doi", Input).value.strip()
+        if doi != (self.paper.doi or ""):
+            updates["doi"] = doi or None
+
+        # Journal
+        journal = self.query_one("#edit-journal", Input).value.strip()
+        if journal != (self.paper.journal or ""):
+            updates["journal"] = journal or None
+
+        # Booktitle
+        booktitle = self.query_one("#edit-booktitle", Input).value.strip()
+        if booktitle != (self.paper.booktitle or ""):
+            updates["booktitle"] = booktitle or None
+
+        # Publisher
+        publisher = self.query_one("#edit-publisher", Input).value.strip()
+        if publisher != (self.paper.publisher or ""):
+            updates["publisher"] = publisher or None
+
+        # Volume
+        volume = self.query_one("#edit-volume", Input).value.strip()
+        if volume != (self.paper.volume or ""):
+            updates["volume"] = volume or None
+
+        # Number
+        number = self.query_one("#edit-number", Input).value.strip()
+        if number != (self.paper.number or ""):
+            updates["number"] = number or None
+
+        # Pages
+        pages = self.query_one("#edit-pages", Input).value.strip()
+        if pages != (self.paper.pages or ""):
+            updates["pages"] = pages or None
+
+        # arXiv ID
+        arxiv_id = self.query_one("#edit-arxiv", Input).value.strip()
+        if arxiv_id != (self.paper.arxiv_id or ""):
+            updates["arxiv_id"] = arxiv_id or None
+
+        # URL
+        url = self.query_one("#edit-url", Input).value.strip()
+        if url != (self.paper.url or ""):
+            updates["url"] = url or None
+
+        # Keywords
+        keywords_str = self.query_one("#edit-keywords", Input).value.strip()
+        new_keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+        if new_keywords != self.paper.keywords:
+            updates["keywords"] = new_keywords
+
+        self.dismiss(updates if updates else None)
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class CreateClusterDialog(ModalScreen[dict | None]):
     """A modal dialog for creating a new cluster view."""
 
@@ -742,8 +965,10 @@ class ClusterScreen(Screen):
 
     BINDINGS = [
         Binding("q", "back", "Back", priority=True),
-        Binding("o", "open_pdf", "Open PDF"),
+        Binding("o", "open_web", "Open Web"),
+        Binding("p", "open_pdf", "PDF"),
         Binding("m", "move_paper", "Move"),
+        Binding("E", "edit_paper", "Edit"),
         Binding("/", "search", "Search", priority=True),
         Binding("escape", "clear_search", "Clear", show=False),
         Binding("e", "expand_all", "Expand"),
@@ -885,7 +1110,40 @@ class ClusterScreen(Screen):
         if self._tree:
             self._tree.root.collapse_all()
 
+    def action_open_web(self) -> None:
+        """Open paper webpage (DOI) or search Google Scholar."""
+        import urllib.parse
+
+        if not self._tree:
+            return
+
+        paper = self._tree.get_selected_paper()
+        if not paper:
+            self.notify("No paper selected", severity="warning")
+            return
+
+        # Prefer DOI URL, then paper URL, then Google Scholar search
+        if paper.doi:
+            url = f"https://doi.org/{paper.doi}"
+            self.notify(f"Opening DOI: {paper.doi}")
+        elif paper.url:
+            url = paper.url
+            self.notify(f"Opening URL")
+        else:
+            # Fallback to Google Scholar search
+            query = urllib.parse.quote(paper.title)
+            url = f"https://scholar.google.com/scholar?q={query}"
+            self.notify("Searching Google Scholar...")
+
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        elif sys.platform == "win32":
+            subprocess.Popen(["start", "", url], shell=True)
+        else:
+            subprocess.Popen(["xdg-open", url])
+
     def action_open_pdf(self) -> None:
+        """Open the local PDF file."""
         if not self._tree:
             return
 
@@ -935,9 +1193,36 @@ class ClusterScreen(Screen):
             handle_move,
         )
 
+    def action_edit_paper(self) -> None:
+        """Edit selected paper's metadata."""
+        if not self._tree:
+            return
+
+        paper = self._tree.get_selected_paper()
+        if not paper:
+            self.notify("Select a paper to edit", severity="warning")
+            return
+
+        def handle_edit(result: dict | None) -> None:
+            if result and paper:
+                self.project.update_paper(paper.id, result)
+                # Refresh paper detail view with updated paper
+                updated_paper = self.project.db.get_paper(paper.id)
+                if self._detail and updated_paper:
+                    self._detail.remove_children()
+                    self._detail.mount(PaperDetail(updated_paper))
+                    # Also update the paper in our local list
+                    for i, p in enumerate(self.papers):
+                        if p.id == paper.id:
+                            self.papers[i] = updated_paper
+                            break
+                self.notify("Paper updated")
+
+        self.app.push_screen(EditPaperDialog(paper), handle_edit)
+
     def action_help(self) -> None:
         self.notify(
-            "/ Search | o Open | m Move | e/c Expand/Collapse | q Back",
+            "/ Search | o Web | p PDF | m Move | E Edit | e/c Expand/Collapse | q Back",
             timeout=5,
         )
 

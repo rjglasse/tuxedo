@@ -223,6 +223,85 @@ class TestPaperOperations:
             ).fetchone()[0]
         assert count == 0
 
+    def test_update_paper_title(self, db, sample_paper):
+        """Paper title can be updated."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {"title": "New Title"})
+
+        paper = db.get_paper("paper1")
+        assert paper.title == "New Title"
+
+    def test_update_paper_year(self, db, sample_paper):
+        """Paper year can be updated."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {"year": 2025})
+
+        paper = db.get_paper("paper1")
+        assert paper.year == 2025
+
+    def test_update_paper_multiple_fields(self, db, sample_paper):
+        """Multiple fields can be updated at once."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {
+            "title": "Updated Title",
+            "abstract": "New abstract",
+            "doi": "10.9999/new",
+            "journal": "New Journal",
+        })
+
+        paper = db.get_paper("paper1")
+        assert paper.title == "Updated Title"
+        assert paper.abstract == "New abstract"
+        assert paper.doi == "10.9999/new"
+        assert paper.journal == "New Journal"
+
+    def test_update_paper_authors(self, db, sample_paper):
+        """Paper authors can be updated."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {
+            "authors": [Author(name="Alice", affiliation="Stanford")]
+        })
+
+        paper = db.get_paper("paper1")
+        assert len(paper.authors) == 1
+        assert paper.authors[0].name == "Alice"
+        assert paper.authors[0].affiliation == "Stanford"
+
+    def test_update_paper_keywords(self, db, sample_paper):
+        """Paper keywords can be updated."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {"keywords": ["new", "keywords", "here"]})
+
+        paper = db.get_paper("paper1")
+        assert paper.keywords == ["new", "keywords", "here"]
+
+    def test_update_paper_empty_updates(self, db, sample_paper):
+        """Empty updates dict does nothing."""
+        db.add_paper(sample_paper)
+        original_title = sample_paper.title
+
+        db.update_paper("paper1", {})
+
+        paper = db.get_paper("paper1")
+        assert paper.title == original_title
+
+    def test_update_paper_unknown_field_ignored(self, db, sample_paper):
+        """Unknown fields are ignored."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {"unknown_field": "value", "title": "New"})
+
+        paper = db.get_paper("paper1")
+        assert paper.title == "New"
+
+    def test_update_paper_null_values(self, db, sample_paper):
+        """Fields can be set to None."""
+        db.add_paper(sample_paper)
+        db.update_paper("paper1", {"doi": None, "abstract": None})
+
+        paper = db.get_paper("paper1")
+        assert paper.doi is None
+        assert paper.abstract is None
+
 
 class TestClusterViewOperations:
     """Tests for cluster view CRUD operations."""

@@ -206,6 +206,68 @@ class Database:
             conn.execute("DELETE FROM cluster_papers WHERE paper_id = ?", (paper_id,))
             conn.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
 
+    def update_paper(self, paper_id: str, updates: dict) -> None:
+        """Update specific fields of a paper.
+
+        Args:
+            paper_id: The ID of the paper to update
+            updates: Dictionary of field names to new values.
+                    Supported fields: title, authors, abstract, year, doi,
+                    journal, booktitle, publisher, volume, number, pages,
+                    arxiv_id, url, keywords
+        """
+        if not updates:
+            return
+
+        # Map of field names to their SQL column and whether they need JSON serialization
+        field_map = {
+            "title": ("title", False),
+            "authors": ("authors", "authors"),  # Special handling for Author objects
+            "abstract": ("abstract", False),
+            "year": ("year", False),
+            "doi": ("doi", False),
+            "journal": ("journal", False),
+            "booktitle": ("booktitle", False),
+            "publisher": ("publisher", False),
+            "volume": ("volume", False),
+            "number": ("number", False),
+            "pages": ("pages", False),
+            "arxiv_id": ("arxiv_id", False),
+            "url": ("url", False),
+            "keywords": ("keywords", "json"),
+        }
+
+        # Build UPDATE query dynamically
+        set_clauses = []
+        values = []
+
+        for field, value in updates.items():
+            if field not in field_map:
+                continue
+
+            col_name, serialization = field_map[field]
+            set_clauses.append(f"{col_name} = ?")
+
+            if serialization == "authors":
+                # Convert Author objects or dicts to JSON
+                if value and isinstance(value[0], Author):
+                    values.append(json.dumps([a.model_dump() for a in value]))
+                else:
+                    values.append(json.dumps(value))
+            elif serialization == "json":
+                values.append(json.dumps(value))
+            else:
+                values.append(value)
+
+        if not set_clauses:
+            return
+
+        values.append(paper_id)
+        query = f"UPDATE papers SET {', '.join(set_clauses)} WHERE id = ?"
+
+        with self._connect() as conn:
+            conn.execute(query, values)
+
     def _row_to_paper(self, row: sqlite3.Row) -> Paper:
         """Convert a database row to a Paper model."""
         return Paper(

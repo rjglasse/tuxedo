@@ -88,8 +88,13 @@ def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str,
 
 
 @main.command()
-def process():
-    """Process PDFs using Grobid to extract content."""
+@click.option("--max-retries", "-r", default=2, type=int, help="Maximum retry attempts per PDF (default: 2)")
+def process(max_retries: int):
+    """Process PDFs using Grobid to extract content.
+
+    Automatically retries failed PDFs with different Grobid configurations.
+    Use 'tuxedo view' to manually repair papers that fail after all retries.
+    """
     project = Project.load()
     if not project:
         console.print("[red]No project found. Run 'tuxedo init' first.[/red]")
@@ -106,10 +111,11 @@ def process():
             raise click.Abort()
 
         pdf_files = project.list_pdfs()
-        console.print(f"Processing {len(pdf_files)} PDFs...")
+        console.print(f"Processing {len(pdf_files)} PDFs (max {max_retries} retries per file)...")
 
         success_count = 0
-        errors: list[tuple[Path, GrobidError]] = []
+        retry_success_count = 0
+        errors: list[tuple[Path, GrobidError, int]] = []  # (path, error, attempts)
 
         with Progress(
             SpinnerColumn(),
@@ -125,33 +131,41 @@ def process():
 
             for pdf_path in pdf_files:
                 progress.update(task, description=f"{pdf_path.name[:30]}...")
-                try:
-                    paper = client.process_pdf(pdf_path)
-                    project.add_paper(paper)
+
+                result = client.process_pdf_with_result(pdf_path, max_retries=max_retries)
+
+                if result.success:
+                    project.add_paper(result.paper)
                     success_count += 1
-                except GrobidProcessingError as e:
-                    errors.append((pdf_path, e))
-                except GrobidParsingError as e:
-                    errors.append((pdf_path, e))
-                except GrobidConnectionError:
+                    if result.retried:
+                        retry_success_count += 1
+                elif isinstance(result.error, GrobidConnectionError):
                     # Connection lost mid-processing
                     console.print("\n[red]Lost connection to Grobid service[/red]")
                     raise click.Abort()
+                else:
+                    errors.append((pdf_path, result.error, result.attempts))
+
                 progress.advance(task)
 
         # Summary
-        console.print(f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green]")
+        if retry_success_count > 0:
+            console.print(f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green] ({retry_success_count} succeeded on retry)")
+        else:
+            console.print(f"\n[green]Processed {success_count}/{len(pdf_files)} papers[/green]")
 
         # Show errors if any
         if errors:
-            console.print(f"\n[yellow]{len(errors)} paper(s) failed to process:[/yellow]")
-            for pdf_path, error in errors:
+            console.print(f"\n[yellow]{len(errors)} paper(s) failed after all retries:[/yellow]")
+            for pdf_path, error, attempts in errors:
+                attempt_info = f"({attempts} attempts)" if attempts > 1 else ""
                 if isinstance(error, GrobidProcessingError) and error.status_code:
-                    console.print(f"  [dim]•[/dim] {pdf_path.name}: HTTP {error.status_code}")
+                    console.print(f"  [dim]•[/dim] {pdf_path.name}: HTTP {error.status_code} {attempt_info}")
                 elif isinstance(error, GrobidParsingError):
-                    console.print(f"  [dim]•[/dim] {pdf_path.name}: Invalid response from Grobid")
+                    console.print(f"  [dim]•[/dim] {pdf_path.name}: Invalid response {attempt_info}")
                 else:
-                    console.print(f"  [dim]•[/dim] {pdf_path.name}: {error}")
+                    console.print(f"  [dim]•[/dim] {pdf_path.name}: {error} {attempt_info}")
+            console.print("\n[dim]Use 'tuxedo view' and press 'e' to manually edit paper metadata[/dim]")
 
         if success_count > 0:
             console.print("\n[dim]Run 'tuxedo cluster' to organize papers[/dim]")

@@ -1,13 +1,23 @@
 """Grobid client for PDF extraction."""
 
 import hashlib
+import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 
 from tuxedo.models import Author, Paper
+
+
+# Default retry configurations - different parameter combinations to try
+DEFAULT_RETRY_CONFIGS = [
+    # First retry: disable header consolidation (less aggressive parsing)
+    {"consolidateHeader": "0", "consolidateCitations": "0"},
+    # Second retry: minimal config
+    {"consolidateHeader": "0", "consolidateCitations": "0", "teiCoordinates": "false"},
+]
 
 # TEI namespace
 TEI_NS = {"tei": "http://www.tei-c.org/ns/1.0"}
@@ -79,6 +89,8 @@ class ProcessingResult:
     pdf_path: Path
     paper: Paper | None = None
     error: GrobidError | None = None
+    attempts: int = 1  # Number of attempts made
+    retried: bool = False  # Whether this succeeded on a retry
 
     @property
     def success(self) -> bool:
@@ -112,11 +124,22 @@ class GrobidClient:
         except httpx.RequestError as e:
             raise GrobidConnectionError(self.base_url, cause=e) from e
 
-    def process_pdf(self, pdf_path: Path) -> Paper:
+    def process_pdf(
+        self,
+        pdf_path: Path,
+        max_retries: int = 2,
+        retry_configs: list[dict] | None = None,
+    ) -> Paper:
         """Process a PDF and extract structured content.
 
+        Args:
+            pdf_path: Path to the PDF file
+            max_retries: Maximum number of retry attempts (default: 2)
+            retry_configs: List of alternative parameter configs for retries.
+                          If None, uses DEFAULT_RETRY_CONFIGS.
+
         Raises:
-            GrobidProcessingError: If Grobid fails to process the PDF
+            GrobidProcessingError: If Grobid fails to process the PDF after all retries
             GrobidParsingError: If the TEI XML response cannot be parsed
             GrobidConnectionError: If cannot connect to Grobid
         """
@@ -129,27 +152,142 @@ class GrobidClient:
         # Generate stable ID from file content
         paper_id = hashlib.sha256(pdf_content).hexdigest()[:12]
 
-        # Call Grobid fulltext endpoint
-        try:
-            resp = self.client.post(
-                f"{self.base_url}/api/processFulltextDocument",
-                files={"input": (pdf_path.name, pdf_content, "application/pdf")},
-                data={"consolidateHeader": "1", "consolidateCitations": "0"},
-            )
-        except httpx.RequestError as e:
-            raise GrobidConnectionError(self.base_url, cause=e) from e
+        # Default config for first attempt
+        default_config = {"consolidateHeader": "1", "consolidateCitations": "0"}
 
-        if resp.status_code != 200:
-            raise GrobidProcessingError(
-                pdf_path,
-                status_code=resp.status_code,
-                response_body=resp.text,
+        # Build list of configs to try
+        configs_to_try = [default_config]
+        if max_retries > 0:
+            retry_list = retry_configs if retry_configs is not None else DEFAULT_RETRY_CONFIGS
+            configs_to_try.extend(retry_list[:max_retries])
+
+        last_error: GrobidProcessingError | None = None
+
+        for attempt, config in enumerate(configs_to_try):
+            try:
+                resp = self._make_grobid_request(pdf_path, pdf_content, config)
+
+                if resp.status_code == 200:
+                    try:
+                        return self._parse_tei(resp.text, paper_id, pdf_path)
+                    except ET.ParseError as e:
+                        # Parsing errors are not retryable with different configs
+                        raise GrobidParsingError(pdf_path, cause=e) from e
+
+                # Non-200 response - save error and maybe retry
+                last_error = GrobidProcessingError(
+                    pdf_path,
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+
+                # Only retry on server errors (5xx) or specific client errors
+                if resp.status_code < 500 and resp.status_code != 400:
+                    raise last_error
+
+            except httpx.RequestError as e:
+                raise GrobidConnectionError(self.base_url, cause=e) from e
+
+            # Wait before retry (exponential backoff: 1s, 2s, 4s...)
+            if attempt < len(configs_to_try) - 1:
+                time.sleep(2 ** attempt)
+
+        # All retries exhausted
+        if last_error:
+            raise last_error
+        raise GrobidProcessingError(pdf_path)
+
+    def _make_grobid_request(
+        self,
+        pdf_path: Path,
+        pdf_content: bytes,
+        config: dict,
+    ) -> httpx.Response:
+        """Make a request to Grobid with the given configuration."""
+        return self.client.post(
+            f"{self.base_url}/api/processFulltextDocument",
+            files={"input": (pdf_path.name, pdf_content, "application/pdf")},
+            data=config,
+        )
+
+    def process_pdf_with_result(
+        self,
+        pdf_path: Path,
+        max_retries: int = 2,
+    ) -> ProcessingResult:
+        """Process a PDF and return a ProcessingResult with retry information.
+
+        This is a convenience method that wraps process_pdf and returns
+        a ProcessingResult object that includes information about whether
+        the result came from a retry attempt.
+        """
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_content = f.read()
+        except OSError as e:
+            return ProcessingResult(
+                pdf_path=pdf_path,
+                error=GrobidProcessingError(pdf_path, cause=e),
+                attempts=1,
             )
 
-        try:
-            return self._parse_tei(resp.text, paper_id, pdf_path)
-        except ET.ParseError as e:
-            raise GrobidParsingError(pdf_path, cause=e) from e
+        paper_id = hashlib.sha256(pdf_content).hexdigest()[:12]
+        default_config = {"consolidateHeader": "1", "consolidateCitations": "0"}
+
+        configs_to_try = [default_config]
+        if max_retries > 0:
+            configs_to_try.extend(DEFAULT_RETRY_CONFIGS[:max_retries])
+
+        last_error: GrobidError | None = None
+
+        for attempt, config in enumerate(configs_to_try):
+            try:
+                resp = self._make_grobid_request(pdf_path, pdf_content, config)
+
+                if resp.status_code == 200:
+                    try:
+                        paper = self._parse_tei(resp.text, paper_id, pdf_path)
+                        return ProcessingResult(
+                            pdf_path=pdf_path,
+                            paper=paper,
+                            attempts=attempt + 1,
+                            retried=attempt > 0,
+                        )
+                    except ET.ParseError as e:
+                        return ProcessingResult(
+                            pdf_path=pdf_path,
+                            error=GrobidParsingError(pdf_path, cause=e),
+                            attempts=attempt + 1,
+                        )
+
+                last_error = GrobidProcessingError(
+                    pdf_path,
+                    status_code=resp.status_code,
+                    response_body=resp.text,
+                )
+
+                if resp.status_code < 500 and resp.status_code != 400:
+                    return ProcessingResult(
+                        pdf_path=pdf_path,
+                        error=last_error,
+                        attempts=attempt + 1,
+                    )
+
+            except httpx.RequestError as e:
+                return ProcessingResult(
+                    pdf_path=pdf_path,
+                    error=GrobidConnectionError(self.base_url, cause=e),
+                    attempts=attempt + 1,
+                )
+
+            if attempt < len(configs_to_try) - 1:
+                time.sleep(2 ** attempt)
+
+        return ProcessingResult(
+            pdf_path=pdf_path,
+            error=last_error or GrobidProcessingError(pdf_path),
+            attempts=len(configs_to_try),
+        )
 
     def _parse_tei(self, tei_xml: str, paper_id: str, pdf_path: Path) -> Paper:
         """Parse TEI XML into Paper model."""

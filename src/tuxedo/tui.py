@@ -217,14 +217,13 @@ class EditPaperDialog(ModalScreen[dict | None]):
     }
 
     #edit-dialog .buttons {
-        margin-top: 2;
+        margin-top: 1;
+        height: auto;
         align: center middle;
-        height: 3;
     }
 
     #edit-dialog .buttons Button {
-        margin: 0 2;
-        min-width: 16;
+        margin: 0 1;
     }
 
     #edit-dialog .row {
@@ -315,8 +314,8 @@ class EditPaperDialog(ModalScreen[dict | None]):
             yield Input(value=keywords_str, id="edit-keywords")
 
             with Horizontal(classes="buttons"):
-                yield Button("[ Save ]", variant="primary", id="save-btn")
-                yield Button("[ Cancel ]", variant="default", id="cancel-btn")
+                yield Button("Save", variant="primary", id="save-btn")
+                yield Button("Cancel", id="cancel-btn")
 
     def on_mount(self) -> None:
         self.query_one("#edit-title", Input).focus()
@@ -1554,14 +1553,27 @@ class ClusterScreen(Screen):
                 self.project.update_paper(paper.id, result)
                 # Refresh paper detail view with updated paper
                 updated_paper = self.project.db.get_paper(paper.id)
-                if self._detail and updated_paper:
-                    self._detail.remove_children()
-                    self._detail.mount(PaperDetail(updated_paper))
-                    # Also update the paper in our local list
+                if updated_paper:
+                    # Update the paper in our local list and lookup dict
                     for i, p in enumerate(self.papers):
                         if p.id == paper.id:
                             self.papers[i] = updated_paper
                             break
+                    self._papers_by_id[paper.id] = updated_paper
+
+                    # Refresh tree to show updated title
+                    if self._tree:
+                        expanded = self._tree.get_expanded_state()
+                        self._tree.all_papers = self.papers
+                        self._tree._paper_map = self._papers_by_id
+                        self._tree._build_tree()
+                        self._tree.restore_expanded_state(expanded)
+
+                    # Refresh detail panel
+                    if self._detail:
+                        self._detail.remove_children()
+                        self._detail.mount(PaperDetail(updated_paper))
+
                 self.notify("Paper updated")
 
         self.app.push_screen(EditPaperDialog(paper), handle_edit)

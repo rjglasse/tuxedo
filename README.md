@@ -35,12 +35,26 @@ uv run tuxedo cluster
 uv run tuxedo view
 ```
 
+## Parallel Processing
+
+Speed up PDF extraction with multiple workers:
+
+```bash
+# Process with 4 parallel workers (up to 4x faster)
+uv run tuxedo process -w 4
+
+# Maximum 8 workers
+uv run tuxedo process --workers 8
+```
+
+Each worker creates its own connection to Grobid. Adjust based on your Grobid server capacity.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `init <pdfs> -q "..."` | Create project from PDF folder |
-| `process` | Extract metadata via Grobid |
+| `process [-w N]` | Extract metadata via Grobid (parallel with N workers) |
 | `process <file.pdf>` | Re-process a single PDF |
 | `cluster` | Cluster papers with LLM |
 | `view` | Interactive TUI |

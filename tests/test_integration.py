@@ -2,6 +2,7 @@
 
 import json
 import pytest
+import httpx
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -389,3 +390,117 @@ class TestMultipleViewsWorkflow:
         assert project_with_papers.view_count() == 1
         assert project_with_papers.get_view(view2.id) is not None
         assert project_with_papers.cluster_count(view2.id) == 1
+
+
+class TestParallelProcessingWorkflow:
+    """Test parallel PDF processing."""
+
+    def test_parallel_process_multiple_pdfs(self, project_with_pdfs, sample_tei_xml, httpx_mock):
+        """Multiple PDFs can be processed in parallel."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from tuxedo.grobid import GrobidClient
+
+        # Track which threads made requests
+        thread_ids = []
+        request_lock = threading.Lock()
+
+        def response_callback(request):
+            with request_lock:
+                thread_ids.append(threading.current_thread().ident)
+            return httpx.Response(200, content=sample_tei_xml)
+
+        # Add responses for each PDF (3 PDFs)
+        for _ in range(3):
+            httpx_mock.add_callback(response_callback)
+
+        grobid_url = "http://localhost:8070"
+        pdf_files = project_with_pdfs.list_pdfs()
+        results = []
+        errors = []
+
+        def process_one(pdf_path):
+            with GrobidClient(grobid_url) as client:
+                return client.process_pdf_with_result(pdf_path, max_retries=0)
+
+        # Process with 2 workers
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {pool.submit(process_one, pdf): pdf for pdf in pdf_files}
+            for future in as_completed(futures):
+                result = future.result()
+                if result.success:
+                    project_with_pdfs.add_paper(result.paper)
+                    results.append(result)
+                else:
+                    errors.append(result.error)
+
+        # All PDFs should be processed successfully
+        assert len(results) == 3
+        assert len(errors) == 0
+        assert project_with_pdfs.paper_count() == 3
+
+    def test_parallel_process_handles_failures(self, project_with_pdfs, sample_tei_xml, httpx_mock):
+        """Parallel processing handles individual failures gracefully."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from tuxedo.grobid import GrobidClient
+
+        # First PDF succeeds, second fails, third succeeds
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content="Internal Server Error",
+            status_code=500,
+        )
+        httpx_mock.add_response(
+            url="http://localhost:8070/api/processFulltextDocument",
+            content=sample_tei_xml,
+            status_code=200,
+        )
+
+        grobid_url = "http://localhost:8070"
+        pdf_files = project_with_pdfs.list_pdfs()
+        successes = []
+        errors = []
+        results_lock = threading.Lock()
+
+        def process_one(pdf_path):
+            with GrobidClient(grobid_url) as client:
+                return client.process_pdf_with_result(pdf_path, max_retries=0)
+
+        # Process with 1 worker to ensure order
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            futures = {pool.submit(process_one, pdf): pdf for pdf in pdf_files}
+            for future in as_completed(futures):
+                pdf_path = futures[future]
+                result = future.result()
+                if result.success:
+                    project_with_pdfs.add_paper(result.paper)
+                    with results_lock:
+                        successes.append(pdf_path)
+                else:
+                    with results_lock:
+                        errors.append((pdf_path, result.error))
+
+        # 2 should succeed, 1 should fail
+        assert len(successes) == 2
+        assert len(errors) == 1
+        assert project_with_pdfs.paper_count() == 2
+
+    def test_worker_count_clamping(self):
+        """Worker count is clamped to valid range."""
+        # Test the clamping logic directly
+        def clamp_workers(w):
+            return max(1, min(w, 8))
+
+        assert clamp_workers(0) == 1
+        assert clamp_workers(-5) == 1
+        assert clamp_workers(1) == 1
+        assert clamp_workers(4) == 4
+        assert clamp_workers(8) == 8
+        assert clamp_workers(10) == 8
+        assert clamp_workers(100) == 8

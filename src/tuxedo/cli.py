@@ -1,6 +1,8 @@
 """CLI interface for Tuxedo."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import click
@@ -102,7 +104,14 @@ def init(source_pdfs: Path, question: str, output: Path | None, grobid_url: str,
 @click.option(
     "--max-retries", "-r", default=2, type=int, help="Maximum retry attempts per PDF (default: 2)"
 )
-def process(pdf_file: Path | None, max_retries: int):
+@click.option(
+    "--workers",
+    "-w",
+    default=1,
+    type=int,
+    help="Number of parallel workers (default: 1, max: 8)",
+)
+def process(pdf_file: Path | None, max_retries: int, workers: int):
     """Process PDFs using Grobid to extract content.
 
     If PDF_FILE is provided, process only that file (can be used to re-process).
@@ -110,14 +119,20 @@ def process(pdf_file: Path | None, max_retries: int):
 
     Automatically retries failed PDFs with different Grobid configurations.
     Use 'tuxedo view' to manually repair papers that fail after all retries.
+
+    Use --workers to process multiple PDFs in parallel (speeds up large batches).
     """
     project = Project.load()
     if not project:
         console.print("[red]No project found. Run 'tuxedo init' first.[/red]")
         raise click.Abort()
 
+    # Clamp workers to reasonable range
+    workers = max(1, min(workers, 8))
+    grobid_url = project.config.grobid_url
+
     # Check Grobid connectivity
-    with GrobidClient(project.config.grobid_url) as client:
+    with GrobidClient(grobid_url) as client:
         try:
             client.check_connection()
         except GrobidConnectionError as e:
@@ -126,52 +141,96 @@ def process(pdf_file: Path | None, max_retries: int):
             console.print("  docker run --rm -p 8070:8070 lfoppiano/grobid:0.8.0")
             raise click.Abort()
 
-        # Determine which PDFs to process
-        if pdf_file:
-            pdf_files = [pdf_file]
-            console.print(
-                f"Re-processing [bold]{pdf_file.name}[/bold] (max {max_retries} retries)..."
-            )
+    # Determine which PDFs to process
+    if pdf_file:
+        pdf_files = [pdf_file]
+        console.print(f"Re-processing [bold]{pdf_file.name}[/bold] (max {max_retries} retries)...")
+    else:
+        pdf_files = project.list_pdfs()
+        worker_info = f" with {workers} workers" if workers > 1 else ""
+        console.print(
+            f"Processing {len(pdf_files)} PDFs{worker_info} (max {max_retries} retries per file)..."
+        )
+
+    success_count = 0
+    retry_success_count = 0
+    errors: list[tuple[Path, GrobidError, int]] = []  # (path, error, attempts)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Processing...", total=len(pdf_files))
+
+        if workers == 1:
+            # Sequential processing (original behavior)
+            with GrobidClient(grobid_url) as client:
+                for pdf_path in pdf_files:
+                    progress.update(task, description=f"{pdf_path.name[:30]}...")
+
+                    result = client.process_pdf_with_result(pdf_path, max_retries=max_retries)
+
+                    if result.success:
+                        project.add_paper(result.paper)
+                        success_count += 1
+                        if result.retried:
+                            retry_success_count += 1
+                    elif isinstance(result.error, GrobidConnectionError):
+                        console.print("\n[red]Lost connection to Grobid service[/red]")
+                        raise click.Abort()
+                    else:
+                        errors.append((pdf_path, result.error, result.attempts))
+
+                    progress.advance(task)
         else:
-            pdf_files = project.list_pdfs()
-            console.print(
-                f"Processing {len(pdf_files)} PDFs (max {max_retries} retries per file)..."
-            )
+            # Parallel processing
+            results_lock = threading.Lock()
+            connection_error = threading.Event()
 
-        success_count = 0
-        retry_success_count = 0
-        errors: list[tuple[Path, GrobidError, int]] = []  # (path, error, attempts)
+            def process_one_pdf(pdf_path: Path):
+                """Process a single PDF in a worker thread."""
+                with GrobidClient(grobid_url) as client:
+                    return client.process_pdf_with_result(pdf_path, max_retries=max_retries)
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TextColumn("•"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Processing...", total=len(pdf_files))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(process_one_pdf, pdf): pdf for pdf in pdf_files}
 
-            for pdf_path in pdf_files:
-                progress.update(task, description=f"{pdf_path.name[:30]}...")
+                for future in as_completed(futures):
+                    if connection_error.is_set():
+                        break
 
-                result = client.process_pdf_with_result(pdf_path, max_retries=max_retries)
+                    pdf_path = futures[future]
+                    progress.update(task, description=f"{pdf_path.name[:30]}...")
 
-                if result.success:
-                    project.add_paper(result.paper)
-                    success_count += 1
-                    if result.retried:
-                        retry_success_count += 1
-                elif isinstance(result.error, GrobidConnectionError):
-                    # Connection lost mid-processing
-                    console.print("\n[red]Lost connection to Grobid service[/red]")
-                    raise click.Abort()
-                else:
-                    errors.append((pdf_path, result.error, result.attempts))
+                    try:
+                        result = future.result()
 
-                progress.advance(task)
+                        if result.success:
+                            project.add_paper(result.paper)
+                            with results_lock:
+                                success_count += 1
+                                if result.retried:
+                                    retry_success_count += 1
+                        elif isinstance(result.error, GrobidConnectionError):
+                            connection_error.set()
+                            console.print("\n[red]Lost connection to Grobid service[/red]")
+                        else:
+                            with results_lock:
+                                errors.append((pdf_path, result.error, result.attempts))
+                    except Exception as e:
+                        with results_lock:
+                            errors.append((pdf_path, GrobidProcessingError(str(e)), 1))
+
+                    progress.advance(task)
+
+            if connection_error.is_set():
+                raise click.Abort()
 
         # Summary
         if retry_success_count > 0:

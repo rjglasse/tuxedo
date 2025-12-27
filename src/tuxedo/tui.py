@@ -664,6 +664,77 @@ class RenameClusterDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class RenameViewDialog(ModalScreen[str | None]):
+    """A modal dialog for renaming a cluster view."""
+
+    CSS = """
+    RenameViewDialog {
+        align: center middle;
+    }
+
+    #rename-view-dialog {
+        width: 70;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #rename-view-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #rename-view-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #rename-view-dialog Input {
+        margin-bottom: 1;
+    }
+
+    #rename-view-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #rename-view-dialog Button {
+        margin-right: 1;
+        border: none;
+    }
+    """
+
+    def __init__(self, view: ClusterView):
+        super().__init__()
+        self.view = view
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-view-dialog"):
+            yield Label("Rename View", classes="title")
+            yield Label(f"Current: {self.view.name}", classes="hint")
+            yield Input(value=self.view.name, id="rename-view-name")
+            with Horizontal(classes="buttons"):
+                yield Button("Save", variant="primary", id="save-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#rename-view-name", Input).focus()
+
+    @on(Button.Pressed, "#save-btn")
+    def on_save(self) -> None:
+        name = self.query_one("#rename-view-name", Input).value.strip()
+        if not name:
+            self.notify("Name cannot be empty", severity="warning")
+            return
+        self.dismiss(name)
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 EXPORT_FORMATS = [
     ("markdown", "Markdown - Hierarchical outline"),
     ("bibtex", "BibTeX - LaTeX bibliography"),
@@ -928,10 +999,12 @@ class ViewSelectionScreen(Screen):
     a list of existing clustering views and allows users to:
     - Select a view to explore its clusters
     - Create a new clustering view with custom prompts
+    - Rename existing views
     - Delete existing views
 
     Bindings:
         n: Create a new clustering view
+        r: Rename the selected view
         d: Delete the selected view
         L: View application logs
         q: Quit the application
@@ -941,6 +1014,7 @@ class ViewSelectionScreen(Screen):
         Binding("q", "quit", "Quit", priority=True),
         Binding("n", "new_view", "New", priority=True),
         Binding("enter", "select", "Select"),
+        Binding("r", "rename", "Rename", priority=True),
         Binding("d", "delete", "Delete", priority=True),
         Binding("L", "view_logs", "Logs"),
     ]
@@ -1065,6 +1139,20 @@ class ViewSelectionScreen(Screen):
                 ConfirmDialog("Delete View", f"Delete '{view.name}' and its clusters?"),
                 handle_confirm,
             )
+
+    def action_rename(self) -> None:
+        """Rename the selected view."""
+        list_view = self.query_one("#view-list", ListView)
+        if list_view.highlighted_child and isinstance(list_view.highlighted_child, ViewListItem):
+            view = list_view.highlighted_child.view
+
+            def handle_rename(new_name: str | None) -> None:
+                if new_name and new_name != view.name:
+                    self.project.rename_view(view.id, new_name)
+                    self.notify(f"Renamed to '{new_name}'")
+                    self._refresh_list()
+
+            self.app.push_screen(RenameViewDialog(view), handle_rename)
 
     def action_view_logs(self) -> None:
         """Open the log viewer screen."""

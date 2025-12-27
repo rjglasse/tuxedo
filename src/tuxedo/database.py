@@ -333,6 +333,14 @@ class Database:
             # Delete view
             conn.execute("DELETE FROM cluster_views WHERE id = ?", (view_id,))
 
+    def rename_view(self, view_id: str, name: str) -> None:
+        """Rename a cluster view."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cluster_views SET name = ? WHERE id = ?",
+                (name, view_id),
+            )
+
     def _row_to_view(self, row: sqlite3.Row) -> ClusterView:
         """Convert a database row to a ClusterView model."""
         created_at = row["created_at"]

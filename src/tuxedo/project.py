@@ -208,6 +208,10 @@ class Project:
         """Delete a cluster view."""
         self.db.delete_view(view_id)
 
+    def rename_view(self, view_id: str, name: str) -> None:
+        """Rename a cluster view."""
+        self.db.rename_view(view_id, name)
+
     def view_count(self) -> int:
         """Get number of cluster views."""
         return self.db.view_count()

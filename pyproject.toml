@@ -21,6 +21,7 @@ tuxedo = "tuxedo.cli:main"
 dev = [
     "pytest>=8.0.0",
     "pytest-httpx>=0.30.0",
+    "ruff>=0.8.0",
 ]
 
 [build-system]

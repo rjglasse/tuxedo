@@ -1,11 +1,13 @@
 """LLM-based paper clustering using OpenAI."""
 
 import json
+import time
 import uuid
 from typing import Callable
 
 from openai import OpenAI
 
+from tuxedo.logging import get_logger
 from tuxedo.models import Cluster, Paper
 
 CLUSTER_SYSTEM_PROMPT = """You are a systematic literature review assistant. Your task is to organize academic papers into a hierarchical structure suitable for writing a literature review.
@@ -149,6 +151,53 @@ class PaperClusterer:
     def __init__(self, api_key: str | None = None, model: str = "gpt-5.2"):
         self.client = OpenAI(api_key=api_key)  # Uses OPENAI_API_KEY env var if None
         self.model = model
+        self.log = get_logger("clustering")
+
+    def _call_api(self, system_prompt: str, user_prompt: str, context: str = "") -> dict:
+        """Make an API call with logging.
+
+        Args:
+            system_prompt: The system prompt
+            user_prompt: The user prompt
+            context: Optional context for logging (e.g., "batch 1/3")
+
+        Returns:
+            Parsed JSON response as dict
+        """
+        ctx = f" ({context})" if context else ""
+        self.log.info(f"Sending OpenAI API request{ctx}, model={self.model}")
+        self.log.debug(f"Prompt length: {len(user_prompt)} chars")
+        start_time = time.time()
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+            )
+            elapsed = time.time() - start_time
+            self.log.info(f"OpenAI API response received{ctx} in {elapsed:.2f}s")
+
+            if response.usage:
+                self.log.info(
+                    f"Token usage: prompt={response.usage.prompt_tokens}, "
+                    f"completion={response.usage.completion_tokens}, "
+                    f"total={response.usage.total_tokens}"
+                )
+
+            result = json.loads(response.choices[0].message.content)
+            return result
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            self.log.error(
+                f"OpenAI API call failed{ctx} after {elapsed:.2f}s: {type(e).__name__}: {e}"
+            )
+            raise
 
     def cluster_papers(
         self,
@@ -179,7 +228,17 @@ class PaperClusterer:
                                  papers that don't fit. If False, strict assignment only.
         """
         if not papers:
+            self.log.info("cluster_papers called with empty paper list")
             return []
+
+        # Log clustering parameters
+        mode = "guided" if categories else ("auto" if auto_mode else "standard")
+        self.log.info(
+            f"cluster_papers: {len(papers)} papers, mode={mode}, model={self.model}, "
+            f"batch_size={batch_size}, auto_mode={auto_mode}"
+        )
+        if categories:
+            self.log.debug(f"Categories: {categories}")
 
         # If batch_size is set and we have more papers than the batch size, use iterative mode
         if batch_size and len(papers) > batch_size:
@@ -239,18 +298,10 @@ Papers to organize:
 
 Create a hierarchical structure for these {len(papers)} papers that would support writing a literature review addressing the research question."""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
-
-        result = json.loads(response.choices[0].message.content)
-        return self._parse_clusters(result.get("clusters", []))
+        result = self._call_api(system_prompt, user_prompt, f"{len(papers)} papers")
+        clusters = self._parse_clusters(result.get("clusters", []))
+        self.log.info(f"Parsed {len(clusters)} clusters from response")
+        return clusters
 
     def _build_paper_summaries(
         self, papers: list[Paper], include_sections: list[str] | None = None
@@ -329,6 +380,7 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         # Split papers into batches
         batches = [papers[i : i + batch_size] for i in range(0, len(papers), batch_size)]
         total_batches = len(batches)
+        self.log.info(f"Iterative clustering: {len(papers)} papers in {total_batches} batches")
 
         # Track accumulated paper_ids per theme (by name)
         theme_papers: dict[str, list[str]] = {}
@@ -374,17 +426,9 @@ Papers to organize:
 
 Create a hierarchical structure for these {len(batch)} papers that would support writing a literature review addressing the research question."""
 
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.3,
+                result = self._call_api(
+                    system_prompt, user_prompt, f"batch {batch_num}/{total_batches}"
                 )
-
-                result = json.loads(response.choices[0].message.content)
                 clusters = self._parse_clusters(result.get("clusters", []))
 
                 # Initialize theme tracking from first batch
@@ -436,17 +480,9 @@ Papers to organize:
 
 Assign each paper to the most appropriate category."""
 
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.3,
+                result = self._call_api(
+                    system_prompt, user_prompt, f"batch {batch_num}/{total_batches} guided"
                 )
-
-                result = json.loads(response.choices[0].message.content)
                 batch_clusters = result.get("clusters", [])
 
                 # Merge batch results into accumulated themes
@@ -482,17 +518,9 @@ New papers to organize:
 
 Assign each paper to the most appropriate existing theme, or create new themes if papers don't fit existing ones."""
 
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": BATCH_CLUSTER_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.3,
+                result = self._call_api(
+                    BATCH_CLUSTER_PROMPT, user_prompt, f"batch {batch_num}/{total_batches}"
                 )
-
-                result = json.loads(response.choices[0].message.content)
                 batch_clusters = result.get("clusters", [])
 
                 # Merge batch results into accumulated themes
@@ -583,6 +611,9 @@ Assign each paper to the most appropriate existing theme, or create new themes i
         current_clusters: list[Cluster],
     ) -> list[Cluster]:
         """Recluster papers with user feedback."""
+        self.log.info(f"recluster: {len(papers)} papers, {len(current_clusters)} clusters")
+        self.log.debug(f"Feedback: {feedback[:100]}...")
+
         if not papers:
             return []
 
@@ -609,18 +640,10 @@ User feedback: {feedback}
 
 Please reorganize the papers based on this feedback while maintaining the overall goal of supporting the literature review."""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": CLUSTER_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
-
-        result = json.loads(response.choices[0].message.content)
-        return self._parse_clusters(result.get("clusters", []))
+        result = self._call_api(CLUSTER_SYSTEM_PROMPT, user_prompt, "recluster")
+        clusters = self._parse_clusters(result.get("clusters", []))
+        self.log.info(f"Recluster returned {len(clusters)} clusters")
+        return clusters
 
     def _clusters_to_dict(self, clusters: list[Cluster]) -> list[dict]:
         """Convert clusters to dict for serialization."""

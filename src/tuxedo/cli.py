@@ -1,6 +1,7 @@
 """CLI interface for Tuxedo."""
 
 import json
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,6 +27,7 @@ from tuxedo.grobid import (
     GrobidParsingError,
     GrobidProcessingError,
 )
+from tuxedo.logging import cleanup_old_logs, get_logger, setup_logging
 from tuxedo.models import Cluster, ClusterView, Paper
 from tuxedo.project import Project
 from tuxedo.tui import run_tui
@@ -35,8 +37,16 @@ console = Console()
 
 @click.group()
 @click.version_option()
-def main():
+@click.option("--debug", is_flag=True, hidden=True, help="Enable debug logging")
+@click.pass_context
+def main(ctx: click.Context, debug: bool):
     """Tuxedo - Organize literature review papers with LLMs."""
+    ctx.ensure_object(dict)
+    level = logging.DEBUG if debug else logging.INFO
+    setup_logging(level=level)
+    cleanup_old_logs(keep_days=7)
+    log = get_logger()
+    log.info(f"Tuxedo started. Command: {' '.join(ctx.args) if ctx.args else 'N/A'}")
 
 
 @main.command()

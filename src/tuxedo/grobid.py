@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 
+from tuxedo.logging import get_logger
 from tuxedo.models import Author, Paper
 
 
@@ -105,6 +106,7 @@ class GrobidClient:
     def __init__(self, base_url: str = "http://localhost:8070"):
         self.base_url = base_url.rstrip("/")
         self.client = httpx.Client(timeout=120.0)
+        self.log = get_logger("grobid")
 
     def is_alive(self) -> bool:
         """Check if Grobid service is available."""
@@ -164,16 +166,25 @@ class GrobidClient:
             configs_to_try.extend(retry_list[:max_retries])
 
         last_error: GrobidProcessingError | None = None
+        self.log.info(f"Processing PDF: {pdf_path.name} ({len(pdf_content)} bytes)")
 
         for attempt, config in enumerate(configs_to_try):
             try:
+                start_time = time.time()
                 resp = self._make_grobid_request(pdf_path, pdf_content, config)
+                elapsed = time.time() - start_time
 
                 if resp.status_code == 200:
+                    self.log.info(f"Grobid response: {pdf_path.name} in {elapsed:.2f}s")
                     try:
-                        return self._parse_tei(resp.text, paper_id, pdf_path)
+                        paper = self._parse_tei(resp.text, paper_id, pdf_path)
+                        self.log.debug(
+                            f"Parsed: {paper.title[:50] if paper.title else 'No title'}..."
+                        )
+                        return paper
                     except ET.ParseError as e:
                         # Parsing errors are not retryable with different configs
+                        self.log.error(f"TEI parsing failed: {pdf_path.name}: {e}")
                         raise GrobidParsingError(pdf_path, cause=e) from e
 
                 # Non-200 response - save error and maybe retry
@@ -185,16 +196,25 @@ class GrobidClient:
 
                 # Only retry on server errors (5xx) or specific client errors
                 if resp.status_code < 500 and resp.status_code != 400:
+                    self.log.error(f"Grobid error: {pdf_path.name} HTTP {resp.status_code}")
                     raise last_error
 
+                self.log.warning(
+                    f"Grobid HTTP {resp.status_code}: {pdf_path.name}, attempt {attempt + 1}/{len(configs_to_try)}"
+                )
+
             except httpx.RequestError as e:
+                self.log.error(f"Grobid connection error: {pdf_path.name}: {e}")
                 raise GrobidConnectionError(self.base_url, cause=e) from e
 
             # Wait before retry (exponential backoff: 1s, 2s, 4s...)
             if attempt < len(configs_to_try) - 1:
-                time.sleep(2**attempt)
+                wait_time = 2**attempt
+                self.log.debug(f"Retrying {pdf_path.name} in {wait_time}s...")
+                time.sleep(wait_time)
 
         # All retries exhausted
+        self.log.error(f"All retries exhausted for {pdf_path.name}")
         if last_error:
             raise last_error
         raise GrobidProcessingError(pdf_path)

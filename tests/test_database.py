@@ -97,7 +97,7 @@ class TestDatabaseSchema:
     def test_creates_database_file(self, tmp_path):
         """Database file is created on initialization."""
         db_path = tmp_path / "subdir" / "test.db"
-        db = Database(db_path)
+        Database(db_path)  # Creates database file
         assert db_path.exists()
 
     def test_creates_tables(self, db):

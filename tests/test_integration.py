@@ -3,7 +3,6 @@
 import json
 import pytest
 import httpx
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tuxedo.project import Project
@@ -493,6 +492,7 @@ class TestParallelProcessingWorkflow:
 
     def test_worker_count_clamping(self):
         """Worker count is clamped to valid range."""
+
         # Test the clamping logic directly
         def clamp_workers(w):
             return max(1, min(w, 8))

@@ -190,7 +190,6 @@ class TestProjectCreate:
 
         # Modify an existing PDF
         existing_pdf = project_root / PAPERS_DIR / "paper1.pdf"
-        original_size = existing_pdf.stat().st_size
         existing_pdf.write_bytes(b"modified content")
 
         # Create project again with same source

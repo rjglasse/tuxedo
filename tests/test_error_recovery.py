@@ -104,9 +104,10 @@ class TestClusteringAPIErrors:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            result = clusterer.cluster_papers(sample_papers, "research question")
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "research question")
 
-            assert result == []
+            assert clusters == []
+            assert relevance_scores == {}
 
     def test_empty_clusters_returns_empty(self, sample_papers):
         """Empty clusters array returns empty list."""
@@ -119,9 +120,10 @@ class TestClusteringAPIErrors:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            result = clusterer.cluster_papers(sample_papers, "research question")
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "research question")
 
-            assert result == []
+            assert clusters == []
+            assert relevance_scores == {}
 
     def test_malformed_cluster_gets_defaults(self, sample_papers):
         """Malformed cluster entries get default values."""
@@ -137,12 +139,12 @@ class TestClusteringAPIErrors:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            result = clusterer.cluster_papers(sample_papers, "research question")
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "research question")
 
-            assert len(result) == 1
-            assert result[0].name == "Unnamed"
-            assert result[0].description == ""
-            assert result[0].paper_ids == []
+            assert len(clusters) == 1
+            assert clusters[0].name == "Unnamed"
+            assert clusters[0].description == ""
+            assert clusters[0].paper_ids == []
 
 
 class TestClusteringBatchErrors:

@@ -300,6 +300,29 @@ class TestPaperOperations:
         assert paper.doi is None
         assert paper.abstract is None
 
+    def test_update_paper_relevance_score(self, db, sample_paper):
+        """Relevance score can be set and retrieved."""
+        db.add_paper(sample_paper)
+        assert db.get_paper("paper1").relevance_score is None
+
+        db.update_paper("paper1", {"relevance_score": 85})
+
+        paper = db.get_paper("paper1")
+        assert paper.relevance_score == 85
+
+    def test_add_paper_with_relevance_score(self, db):
+        """Paper with relevance score can be added."""
+        paper = Paper(
+            id="scored_paper",
+            pdf_path=Path("test.pdf"),
+            title="Scored Paper",
+            relevance_score=72,
+        )
+        db.add_paper(paper)
+
+        retrieved = db.get_paper("scored_paper")
+        assert retrieved.relevance_score == 72
+
 
 class TestClusterViewOperations:
     """Tests for cluster view CRUD operations."""

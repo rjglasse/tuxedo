@@ -192,7 +192,7 @@ class TestClusteringWorkflow:
             # Cluster papers
             clusterer = PaperClusterer()
             papers = project_with_papers.get_papers()
-            clusters = clusterer.cluster_papers(papers, view.prompt)
+            clusters, relevance_scores = clusterer.cluster_papers(papers, view.prompt)
 
             # Save clusters
             project_with_papers.save_clusters(view.id, clusters)
@@ -577,7 +577,7 @@ class TestFullWorkflowIntegration:
 
             view = project.create_view("By Theme", "Group by theme")
             clusterer = PaperClusterer()
-            clusters = clusterer.cluster_papers(project.get_papers(), view.prompt)
+            clusters, relevance_scores = clusterer.cluster_papers(project.get_papers(), view.prompt)
             project.save_clusters(view.id, clusters)
 
         return project
@@ -835,7 +835,7 @@ class TestGuidedClusteringWorkflow:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            clusters = clusterer.cluster_papers(
+            clusters, relevance_scores = clusterer.cluster_papers(
                 project_with_papers.get_papers(),
                 "Research question",
                 categories=["Quantitative", "Qualitative", "Mixed Methods"],

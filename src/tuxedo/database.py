@@ -110,6 +110,7 @@ BIBLIO_COLUMNS = [
     ("pages", "TEXT"),
     ("arxiv_id", "TEXT"),
     ("url", "TEXT"),
+    ("relevance_score", "INTEGER"),
 ]
 
 
@@ -177,8 +178,9 @@ class Database:
                 """
                 INSERT OR REPLACE INTO papers
                 (id, pdf_filename, title, authors, abstract, year, doi, sections, keywords,
-                 journal, booktitle, publisher, volume, number, pages, arxiv_id, url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 journal, booktitle, publisher, volume, number, pages, arxiv_id, url,
+                 relevance_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     paper.id,
@@ -198,6 +200,7 @@ class Database:
                     paper.pages,
                     paper.arxiv_id,
                     paper.url,
+                    paper.relevance_score,
                 ),
             )
 
@@ -234,7 +237,7 @@ class Database:
             updates: Dictionary of field names to new values.
                     Supported fields: title, authors, abstract, year, doi,
                     journal, booktitle, publisher, volume, number, pages,
-                    arxiv_id, url, keywords
+                    arxiv_id, url, keywords, relevance_score
         """
         if not updates:
             return
@@ -255,6 +258,7 @@ class Database:
             "arxiv_id": ("arxiv_id", False),
             "url": ("url", False),
             "keywords": ("keywords", "json"),
+            "relevance_score": ("relevance_score", False),
         }
 
         # Build UPDATE query dynamically
@@ -308,6 +312,7 @@ class Database:
             pages=row["pages"],
             arxiv_id=row["arxiv_id"],
             url=row["url"],
+            relevance_score=row["relevance_score"],
         )
 
     # Cluster View operations

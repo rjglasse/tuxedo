@@ -1453,7 +1453,7 @@ class ViewSelectionScreen(Screen):
             def progress_callback(batch_num: int, total: int, message: str) -> None:
                 self._update_progress(message)
 
-            clusters = clusterer.cluster_papers(
+            clusters, relevance_scores = clusterer.cluster_papers(
                 papers,
                 prompt,
                 include_sections=section_patterns,
@@ -1464,6 +1464,9 @@ class ViewSelectionScreen(Screen):
                 allow_new_categories=True,  # TUI defaults to flexible mode
             )
             self.project.save_clusters(view.id, clusters)
+            # Update paper relevance scores
+            for paper_id, score in relevance_scores.items():
+                self.project.update_paper(paper_id, {"relevance_score": score})
 
             self._dismiss_progress()
             self.app.call_from_thread(self._refresh_list)
@@ -1874,8 +1877,10 @@ class ClusterTree(Tree):
             )
             for paper in uncategorized:
                 year_suffix = f" [{paper.year}]" if paper.year else ""
+                relevance = f" [{paper.relevance_score}%]" if paper.relevance_score else ""
                 node.add_leaf(
-                    f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper}
+                    f"[dim]{paper.title}{year_suffix}{relevance}[/dim]",
+                    data={"type": "paper", "paper": paper},
                 )
 
     def _collect_used_papers(self, clusters: list[Cluster], used: set[str]) -> None:
@@ -1966,8 +1971,10 @@ class ClusterTree(Tree):
         )
         for paper in sorted_papers:
             year_suffix = f" [{paper.year}]" if paper.year else ""
+            relevance = f" [{paper.relevance_score}%]" if paper.relevance_score else ""
             node.add_leaf(
-                f"[dim]{paper.title}{year_suffix}[/dim]", data={"type": "paper", "paper": paper}
+                f"[dim]{paper.title}{year_suffix}{relevance}[/dim]",
+                data={"type": "paper", "paper": paper},
             )
 
         for subcluster in cluster.subclusters:
@@ -2387,16 +2394,21 @@ class ClusterScreen(Screen):
 
         try:
             clusterer = PaperClusterer()
-            new_clusters = clusterer.recluster(
+            new_clusters, relevance_scores = clusterer.recluster(
                 papers=self.papers,
                 research_question=self.project.config.research_question,
                 feedback=feedback,
                 current_clusters=self.clusters,
             )
 
-            # Save new clusters
+            # Save new clusters and update relevance scores
             self.project.save_clusters(self.view.id, new_clusters)
+            for paper_id, score in relevance_scores.items():
+                self.project.update_paper(paper_id, {"relevance_score": score})
             self.clusters = new_clusters
+            # Refresh papers to get updated relevance scores
+            self.papers = self.project.get_papers()
+            self._papers_by_id = {p.id: p for p in self.papers}
 
             # Update tree on main thread
             def refresh_tree() -> None:

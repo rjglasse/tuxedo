@@ -531,7 +531,7 @@ def cluster(
             def progress_callback(batch_num: int, total: int, message: str) -> None:
                 progress.update(task, completed=batch_num - 1, description=message)
 
-            clusters = clusterer.cluster_papers(
+            clusters, relevance_scores = clusterer.cluster_papers(
                 papers,
                 prompt,
                 include_sections=section_patterns,
@@ -557,7 +557,7 @@ def cluster(
             else:
                 task_desc = f"Analyzing {len(papers)} papers with {model}..."
             progress.add_task(task_desc, total=None)
-            clusters = clusterer.cluster_papers(
+            clusters, relevance_scores = clusterer.cluster_papers(
                 papers,
                 prompt,
                 include_sections=section_patterns,
@@ -566,7 +566,10 @@ def cluster(
                 allow_new_categories=not strict,
             )
 
+    # Save clusters and update paper relevance scores
     project.save_clusters(view.id, clusters)
+    for paper_id, score in relevance_scores.items():
+        project.update_paper(paper_id, {"relevance_score": score})
 
     # Display summary
     console.print(f"\n[green]Created view '{name}' with {len(clusters)} clusters[/green]\n")

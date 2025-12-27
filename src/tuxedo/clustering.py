@@ -17,6 +17,7 @@ Given a research question and paper abstracts, create a logical hierarchical str
 2. Creates meaningful cluster names that could become section headings
 3. Provides brief descriptions explaining each cluster's focus
 4. Organizes subclusters where appropriate (max 2 levels deep)
+5. Rate each paper's relevance to the research question (0-100%)
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -33,14 +34,20 @@ Respond ONLY with valid JSON in this exact format:
         }
       ]
     }
-  ]
+  ],
+  "relevance_scores": {
+    "id1": 85,
+    "id2": 72,
+    "id3": 45
+  }
 }
 
 Important:
 - Every paper must appear in exactly one cluster or subcluster
 - Cluster names should be suitable as section headings
 - Aim for 3-7 top-level clusters depending on paper count
-- Only create subclusters if there's meaningful differentiation"""
+- Only create subclusters if there's meaningful differentiation
+- relevance_scores: 0-100 rating of how relevant each paper is to the research question"""
 
 AUTO_CLUSTER_SYSTEM_PROMPT = """You are a systematic literature review assistant. Your task is to analyze a collection of academic papers and discover the natural themes, topics, and patterns that emerge from them.
 
@@ -50,6 +57,7 @@ Without a predetermined research question, analyze the papers and:
 3. Create meaningful cluster names that capture the essence of each group
 4. Provide descriptions explaining what unifies papers in each cluster
 5. Organize subclusters where appropriate (max 2 levels deep)
+6. Rate each paper's relevance to the overall collection theme (0-100%)
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -66,7 +74,12 @@ Respond ONLY with valid JSON in this exact format:
         }
       ]
     }
-  ]
+  ],
+  "relevance_scores": {
+    "id1": 85,
+    "id2": 72,
+    "id3": 45
+  }
 }
 
 Important:
@@ -74,7 +87,8 @@ Important:
 - Cluster names should be suitable as section headings
 - Aim for 3-7 top-level clusters depending on paper count
 - Only create subclusters if there's meaningful differentiation
-- Focus on discovering what themes naturally emerge from the papers"""
+- Focus on discovering what themes naturally emerge from the papers
+- relevance_scores: 0-100 rating of how central each paper is to the collection's main themes"""
 
 # Predefined auto-discovery modes
 AUTO_DISCOVERY_PROMPTS = {
@@ -91,6 +105,7 @@ You are given a list of categories that the researcher wants to use. Your job is
 1. Assign each paper to the most appropriate category
 2. Provide descriptions for each category based on the papers assigned
 3. {new_category_instruction}
+4. Rate each paper's relevance to the research focus (0-100%)
 
 Respond ONLY with valid JSON in this exact format:
 {{
@@ -101,7 +116,11 @@ Respond ONLY with valid JSON in this exact format:
       "paper_ids": ["id1", "id2"],
       "subclusters": []
     }}
-  ]
+  ],
+  "relevance_scores": {{
+    "id1": 85,
+    "id2": 72
+  }}
 }}
 
 Important:
@@ -109,7 +128,8 @@ Important:
 - Use the exact category names provided by the researcher
 - {new_category_rule}
 - If a paper could fit multiple categories, choose the best fit
-- Category descriptions should reflect the actual papers assigned"""
+- Category descriptions should reflect the actual papers assigned
+- relevance_scores: 0-100 rating of how relevant each paper is to the research focus"""
 
 GUIDED_ALLOW_NEW = "If papers don't fit any provided category well, you may create new categories"
 GUIDED_STRICT = "Do NOT create new categories - assign every paper to one of the provided categories, even if the fit isn't perfect"
@@ -134,7 +154,11 @@ Respond ONLY with valid JSON in this exact format:
       "paper_ids": ["id1", "id2"],
       "subclusters": []
     }
-  ]
+  ],
+  "relevance_scores": {
+    "id1": 85,
+    "id2": 72
+  }
 }
 
 Important:
@@ -142,7 +166,8 @@ Important:
 - paper_ids should ONLY contain papers from the new batch (not previous papers)
 - You may create new themes if papers don't fit existing ones
 - You may refine theme names/descriptions as patterns become clearer
-- Keep theme names suitable as section headings"""
+- Keep theme names suitable as section headings
+- relevance_scores: 0-100 rating of how relevant each paper is to the research question"""
 
 
 class PaperClusterer:
@@ -209,7 +234,7 @@ class PaperClusterer:
         auto_mode: str | None = None,
         categories: list[str | dict] | None = None,
         allow_new_categories: bool = True,
-    ) -> list[Cluster]:
+    ) -> tuple[list[Cluster], dict[str, int]]:
         """Cluster papers based on research question, auto-discovery, or guided categories.
 
         Args:
@@ -226,10 +251,13 @@ class PaperClusterer:
                        Can be a list of strings or dicts with "name" and optional "description".
             allow_new_categories: If True (default), AI can create new categories for
                                  papers that don't fit. If False, strict assignment only.
+
+        Returns:
+            Tuple of (clusters, relevance_scores) where relevance_scores maps paper_id to 0-100.
         """
         if not papers:
             self.log.info("cluster_papers called with empty paper list")
-            return []
+            return [], {}
 
         # Log clustering parameters
         mode = "guided" if categories else ("auto" if auto_mode else "standard")
@@ -300,8 +328,11 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
 
         result = self._call_api(system_prompt, user_prompt, f"{len(papers)} papers")
         clusters = self._parse_clusters(result.get("clusters", []))
-        self.log.info(f"Parsed {len(clusters)} clusters from response")
-        return clusters
+        relevance_scores = result.get("relevance_scores", {})
+        # Ensure scores are integers
+        relevance_scores = {k: int(v) for k, v in relevance_scores.items()}
+        self.log.info(f"Parsed {len(clusters)} clusters, {len(relevance_scores)} relevance scores")
+        return clusters, relevance_scores
 
     def _build_paper_summaries(
         self, papers: list[Paper], include_sections: list[str] | None = None
@@ -371,7 +402,7 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         auto_mode: str | None = None,
         categories: list[str | dict] | None = None,
         allow_new_categories: bool = True,
-    ) -> list[Cluster]:
+    ) -> tuple[list[Cluster], dict[str, int]]:
         """Cluster papers iteratively in batches.
 
         First batch establishes initial themes, subsequent batches add papers
@@ -385,6 +416,8 @@ Create a hierarchical structure for these {len(papers)} papers that would suppor
         # Track accumulated paper_ids per theme (by name)
         theme_papers: dict[str, list[str]] = {}
         theme_descriptions: dict[str, str] = {}
+        # Track accumulated relevance scores
+        all_relevance_scores: dict[str, int] = {}
 
         # For guided mode, initialize themes from categories
         if categories:
@@ -430,6 +463,8 @@ Create a hierarchical structure for these {len(batch)} papers that would support
                     system_prompt, user_prompt, f"batch {batch_num}/{total_batches}"
                 )
                 clusters = self._parse_clusters(result.get("clusters", []))
+                batch_scores = result.get("relevance_scores", {})
+                all_relevance_scores.update({k: int(v) for k, v in batch_scores.items()})
 
                 # Initialize theme tracking from first batch
                 for cluster in clusters:
@@ -484,6 +519,8 @@ Assign each paper to the most appropriate category."""
                     system_prompt, user_prompt, f"batch {batch_num}/{total_batches} guided"
                 )
                 batch_clusters = result.get("clusters", [])
+                batch_scores = result.get("relevance_scores", {})
+                all_relevance_scores.update({k: int(v) for k, v in batch_scores.items()})
 
                 # Merge batch results into accumulated themes
                 for cluster in batch_clusters:
@@ -522,6 +559,8 @@ Assign each paper to the most appropriate existing theme, or create new themes i
                     BATCH_CLUSTER_PROMPT, user_prompt, f"batch {batch_num}/{total_batches}"
                 )
                 batch_clusters = result.get("clusters", [])
+                batch_scores = result.get("relevance_scores", {})
+                all_relevance_scores.update({k: int(v) for k, v in batch_scores.items()})
 
                 # Merge batch results into accumulated themes
                 for cluster in batch_clusters:
@@ -574,7 +613,7 @@ Assign each paper to the most appropriate existing theme, or create new themes i
                     )
                     break
 
-        return final_clusters
+        return final_clusters, all_relevance_scores
 
     def _parse_clusters(self, raw_clusters: list[dict]) -> list[Cluster]:
         """Parse raw cluster dicts into Cluster models."""
@@ -609,13 +648,13 @@ Assign each paper to the most appropriate existing theme, or create new themes i
         research_question: str,
         feedback: str,
         current_clusters: list[Cluster],
-    ) -> list[Cluster]:
+    ) -> tuple[list[Cluster], dict[str, int]]:
         """Recluster papers with user feedback."""
         self.log.info(f"recluster: {len(papers)} papers, {len(current_clusters)} clusters")
         self.log.debug(f"Feedback: {feedback[:100]}...")
 
         if not papers:
-            return []
+            return [], {}
 
         paper_summaries = []
         for paper in papers:
@@ -642,8 +681,10 @@ Please reorganize the papers based on this feedback while maintaining the overal
 
         result = self._call_api(CLUSTER_SYSTEM_PROMPT, user_prompt, "recluster")
         clusters = self._parse_clusters(result.get("clusters", []))
-        self.log.info(f"Recluster returned {len(clusters)} clusters")
-        return clusters
+        relevance_scores = result.get("relevance_scores", {})
+        relevance_scores = {k: int(v) for k, v in relevance_scores.items()}
+        self.log.info(f"Recluster returned {len(clusters)} clusters, {len(relevance_scores)} scores")
+        return clusters, relevance_scores
 
     def _clusters_to_dict(self, clusters: list[Cluster]) -> list[dict]:
         """Convert clusters to dict for serialization."""

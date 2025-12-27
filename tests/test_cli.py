@@ -291,15 +291,18 @@ class TestClusterCommand:
 
             with patch("tuxedo.cli.PaperClusterer") as mock_clusterer_class:
                 mock_clusterer = Mock()
-                mock_clusterer.cluster_papers.return_value = [
-                    Cluster(
-                        id="c1",
-                        name="Test Cluster",
-                        description="Test",
-                        paper_ids=[sample_paper.id],
-                        subclusters=[],
-                    )
-                ]
+                mock_clusterer.cluster_papers.return_value = (
+                    [
+                        Cluster(
+                            id="c1",
+                            name="Test Cluster",
+                            description="Test",
+                            paper_ids=[sample_paper.id],
+                            subclusters=[],
+                        )
+                    ],
+                    {sample_paper.id: 85},
+                )
                 mock_clusterer_class.return_value = mock_clusterer
 
                 result = runner.invoke(main, ["cluster", "-n", "My Custom View"])
@@ -317,15 +320,18 @@ class TestClusterCommand:
 
             with patch("tuxedo.cli.PaperClusterer") as mock_clusterer_class:
                 mock_clusterer = Mock()
-                mock_clusterer.cluster_papers.return_value = [
-                    Cluster(
-                        id="c1",
-                        name="Auto Cluster",
-                        description="Auto discovered",
-                        paper_ids=[sample_paper.id],
-                        subclusters=[],
-                    )
-                ]
+                mock_clusterer.cluster_papers.return_value = (
+                    [
+                        Cluster(
+                            id="c1",
+                            name="Auto Cluster",
+                            description="Auto discovered",
+                            paper_ids=[sample_paper.id],
+                            subclusters=[],
+                        )
+                    ],
+                    {sample_paper.id: 70},
+                )
                 mock_clusterer_class.return_value = mock_clusterer
 
                 result = runner.invoke(main, ["cluster", "--auto", "themes"])
@@ -342,15 +348,18 @@ class TestClusterCommand:
 
             with patch("tuxedo.cli.PaperClusterer") as mock_clusterer_class:
                 mock_clusterer = Mock()
-                mock_clusterer.cluster_papers.return_value = [
-                    Cluster(
-                        id="c1",
-                        name="Quantitative",
-                        description="",
-                        paper_ids=[sample_paper.id],
-                        subclusters=[],
-                    )
-                ]
+                mock_clusterer.cluster_papers.return_value = (
+                    [
+                        Cluster(
+                            id="c1",
+                            name="Quantitative",
+                            description="",
+                            paper_ids=[sample_paper.id],
+                            subclusters=[],
+                        )
+                    ],
+                    {sample_paper.id: 90},
+                )
                 mock_clusterer_class.return_value = mock_clusterer
 
                 result = runner.invoke(main, ["cluster", "-c", "Quantitative, Qualitative, Mixed"])

@@ -179,9 +179,10 @@ class TestClusterPapers:
         """Empty paper list returns empty clusters."""
         with patch("tuxedo.clustering.OpenAI"):
             clusterer = PaperClusterer()
-            result = clusterer.cluster_papers([], "research question")
+            clusters, relevance_scores = clusterer.cluster_papers([], "research question")
 
-        assert result == []
+        assert clusters == []
+        assert relevance_scores == {}
 
     def test_calls_openai_with_correct_prompt(self, sample_papers, mock_openai_response):
         """OpenAI is called with correct system prompt and paper data."""
@@ -236,7 +237,7 @@ class TestClusterPapers:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            clusters = clusterer.cluster_papers(sample_papers, "question")
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "question")
 
         assert len(clusters) == 2
         assert clusters[0].name == "Deep Learning"
@@ -260,6 +261,59 @@ class TestClusterPapers:
 
             call_args = mock_client.chat.completions.create.call_args
             assert call_args.kwargs["response_format"] == {"type": "json_object"}
+
+    def test_returns_relevance_scores(self, sample_papers, mock_openai_response):
+        """Relevance scores are parsed from response."""
+        response_data = {
+            "clusters": [
+                {
+                    "name": "ML Papers",
+                    "description": "Machine learning papers",
+                    "paper_ids": ["p1", "p2", "p3"],
+                }
+            ],
+            "relevance_scores": {
+                "p1": 95,
+                "p2": 72,
+                "p3": 45,
+            },
+        }
+        response = mock_openai_response(response_data)
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "question")
+
+        assert len(clusters) == 1
+        assert relevance_scores == {"p1": 95, "p2": 72, "p3": 45}
+
+    def test_missing_relevance_scores_returns_empty(self, sample_papers, mock_openai_response):
+        """Missing relevance_scores in response returns empty dict."""
+        response_data = {
+            "clusters": [
+                {
+                    "name": "ML Papers",
+                    "description": "Machine learning papers",
+                    "paper_ids": ["p1"],
+                }
+            ],
+        }
+        response = mock_openai_response(response_data)
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers[:1], "question")
+
+        assert len(clusters) == 1
+        assert relevance_scores == {}
 
 
 class TestParseCluster:
@@ -448,7 +502,7 @@ class TestBatchClustering:
             mock_openai.return_value = mock_client
 
             clusterer = PaperClusterer()
-            clusters = clusterer.cluster_papers(sample_papers, "question", batch_size=1)
+            clusters, relevance_scores = clusterer.cluster_papers(sample_papers, "question", batch_size=1)
 
         # Should have 2 themes: Theme A with p1,p2 and Theme B with p3
         assert len(clusters) == 2
@@ -512,9 +566,10 @@ class TestRecluster:
         """Recluster with empty papers returns empty."""
         with patch("tuxedo.clustering.OpenAI"):
             clusterer = PaperClusterer()
-            result = clusterer.recluster([], "question", "feedback", [])
+            clusters, relevance_scores = clusterer.recluster([], "question", "feedback", [])
 
-        assert result == []
+        assert clusters == []
+        assert relevance_scores == {}
 
 
 class TestClustersToDict:

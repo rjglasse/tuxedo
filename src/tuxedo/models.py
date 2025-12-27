@@ -36,6 +36,9 @@ class Paper(BaseModel):
     arxiv_id: str | None = None  # arXiv identifier
     url: str | None = None  # URL if available
 
+    # Relevance score against research question (0-100)
+    relevance_score: int | None = None
+
     @property
     def display_title(self) -> str:
         """Short title for display."""

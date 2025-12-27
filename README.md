@@ -62,7 +62,9 @@ Each worker creates its own connection to Grobid. Adjust based on your Grobid se
 | `export <view_id> -f FORMAT` | Export (bibtex, csv, ris, markdown, json, latex) |
 | `papers` | List all papers |
 | `delete-paper <id>` | Remove a paper from the project |
+| `delete-view <id>` | Remove a clustering view |
 | `status` | Show project info |
+| `completion [shell]` | Generate shell completion script |
 
 ## Clustering Modes
 
@@ -146,6 +148,20 @@ uv run tuxedo cluster -n "Auto Themes" --auto
 uv run tuxedo cluster -n "My Categories" -c "Theory, Practice, Case Studies"
 ```
 
+## Large Paper Sets
+
+For collections with many papers, use batch processing to avoid token limits:
+
+```bash
+# Process papers in batches of 10
+uv run tuxedo cluster --batch-size 10
+
+# Include specific paper sections for better clustering
+uv run tuxedo cluster -s "method,methodology,approach"
+```
+
+Themes are developed incrementally: the first batch establishes themes, subsequent batches add papers to existing themes or create new ones as needed.
+
 ## TUI Keybindings
 
 ### View Selection Screen
@@ -177,6 +193,12 @@ Export from CLI:
 # BibTeX for LaTeX
 uv run tuxedo export abc123 -f bibtex -o refs.bib
 
+# BibTeX with abstracts included
+uv run tuxedo export abc123 -f bibtex --abstract -o refs.bib
+
+# LaTeX skeleton with sections and citations
+uv run tuxedo export abc123 -f latex -o review.tex
+
 # Markdown outline for writing
 uv run tuxedo export abc123 -f markdown -o outline.md
 
@@ -185,9 +207,29 @@ uv run tuxedo export abc123 -f csv -o papers.csv
 
 # RIS for reference managers (EndNote, Zotero, Mendeley)
 uv run tuxedo export abc123 -f ris -o papers.ris
+
+# JSON for custom processing
+uv run tuxedo export abc123 -f json -o data.json
 ```
 
 Or press `x` in the TUI to export the current view directly.
+
+## Shell Completion
+
+Enable tab completion for commands and options:
+
+```bash
+# Bash
+eval "$(tuxedo completion bash)"
+
+# Zsh
+eval "$(tuxedo completion zsh)"
+
+# Fish
+tuxedo completion fish | source
+```
+
+Add to your shell config file (`.bashrc`, `.zshrc`, etc.) for persistence.
 
 ## Project Structure
 

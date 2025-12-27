@@ -1390,7 +1390,9 @@ def export_questions(output: Path):
     csv_content = output_buffer.getvalue()
 
     output.write_text(csv_content)
-    console.print(f"[green]Exported {len(questions_sorted)} questions across {len(paper_list)} papers to {output}[/green]")
+    console.print(
+        f"[green]Exported {len(questions_sorted)} questions across {len(paper_list)} papers to {output}[/green]"
+    )
 
 
 if __name__ == "__main__":

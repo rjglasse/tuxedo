@@ -1829,6 +1829,10 @@ class ClusterTree(Tree):
         background: $surface-lighten-2;
         color: $text;
     }
+
+    ClusterTree > .tree--label {
+        padding: 1 0 0 0;
+    }
     """
 
     def __init__(

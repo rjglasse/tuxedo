@@ -1831,7 +1831,7 @@ class ClusterTree(Tree):
     }
 
     ClusterTree > .tree--label {
-        padding: 1 0 0 0;
+        padding: 2 0 0 0;
     }
     """
 

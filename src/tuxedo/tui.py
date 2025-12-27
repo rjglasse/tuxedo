@@ -11,7 +11,18 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Select, Static, Tree
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    LoadingIndicator,
+    Select,
+    Static,
+    Tree,
+)
 from textual.widgets.tree import TreeNode
 
 from tuxedo.clustering import PaperClusterer
@@ -183,6 +194,64 @@ class ConfirmDialog(ModalScreen[bool]):
 
     def key_n(self) -> None:
         self.dismiss(False)
+
+
+class ClusteringProgressScreen(ModalScreen[None]):
+    """A modal screen showing clustering progress.
+
+    This screen blocks interaction while clustering is in progress,
+    displaying a loading indicator and status message.
+    """
+
+    CSS = """
+    ClusteringProgressScreen {
+        align: center middle;
+    }
+
+    #progress-dialog {
+        width: 60;
+        height: auto;
+        background: $surface;
+        padding: 2 3;
+    }
+
+    #progress-dialog .title {
+        text-style: bold;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    #progress-dialog .status {
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #progress-dialog LoadingIndicator {
+        width: 100%;
+        height: 3;
+    }
+    """
+
+    def __init__(self, title: str = "Clustering Papers"):
+        super().__init__()
+        self.title_text = title
+        self._status = "Initializing..."
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="progress-dialog"):
+            yield Label(self.title_text, classes="title")
+            yield LoadingIndicator()
+            yield Label(self._status, classes="status", id="status-label")
+
+    def update_status(self, status: str) -> None:
+        """Update the status message."""
+        self._status = status
+        try:
+            label = self.query_one("#status-label", Label)
+            label.update(status)
+        except Exception:
+            pass  # Screen may not be fully mounted yet
 
 
 class EditPaperDialog(ModalScreen[dict | None]):
@@ -925,6 +994,7 @@ class ViewSelectionScreen(Screen):
         super().__init__()
         self.project = project
         self._pending_delete: ClusterView | None = None
+        self._progress_screen: ClusteringProgressScreen | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="view-list-container"):
@@ -963,6 +1033,9 @@ class ViewSelectionScreen(Screen):
 
         def handle_create(result: dict | None) -> None:
             if result:
+                # Show progress screen before starting clustering
+                self._progress_screen = ClusteringProgressScreen()
+                self.app.push_screen(self._progress_screen)
                 self._create_new_view(result)
 
         self.app.push_screen(
@@ -995,6 +1068,17 @@ class ViewSelectionScreen(Screen):
     def action_view_logs(self) -> None:
         """Open the log viewer screen."""
         self.app.push_screen(LogViewerScreen())
+
+    def _update_progress(self, status: str) -> None:
+        """Update the progress screen status from background thread."""
+        if self._progress_screen:
+            self.app.call_from_thread(self._progress_screen.update_status, status)
+
+    def _dismiss_progress(self) -> None:
+        """Dismiss the progress screen from background thread."""
+        if self._progress_screen:
+            self.app.call_from_thread(self.app.pop_screen)
+            self._progress_screen = None
 
     @work(thread=True)
     def _create_new_view(self, config: dict) -> None:
@@ -1034,18 +1118,15 @@ class ViewSelectionScreen(Screen):
             views = self.project.get_views()
             name = f"View {len(views) + 1}"
 
+        # Update progress screen with initial status
         if categories:
-            self.app.call_from_thread(
-                self.notify, f"Guided clustering into {len(categories)} categories..."
-            )
+            self._update_progress(f"Guided clustering into {len(categories)} categories...")
         elif auto_mode:
-            self.app.call_from_thread(self.notify, f"Auto-discovering themes with {model}...")
+            self._update_progress(f"Auto-discovering themes with {model}...")
         elif batch_size:
-            self.app.call_from_thread(
-                self.notify, f"Clustering with {model} (batch size: {batch_size})..."
-            )
+            self._update_progress(f"Clustering with {model} (batch size: {batch_size})...")
         else:
-            self.app.call_from_thread(self.notify, f"Clustering with {model}...")
+            self._update_progress(f"Clustering {self.project.paper_count()} papers with {model}...")
 
         try:
             # Create view and cluster
@@ -1053,6 +1134,7 @@ class ViewSelectionScreen(Screen):
             papers = self.project.get_papers()
 
             if not papers:
+                self._dismiss_progress()
                 self.app.call_from_thread(self.notify, "No papers to cluster", severity="warning")
                 return
 
@@ -1060,7 +1142,7 @@ class ViewSelectionScreen(Screen):
 
             # Progress callback for batch mode
             def progress_callback(batch_num: int, total: int, message: str) -> None:
-                self.app.call_from_thread(self.notify, message)
+                self._update_progress(message)
 
             clusters = clusterer.cluster_papers(
                 papers,
@@ -1074,11 +1156,13 @@ class ViewSelectionScreen(Screen):
             )
             self.project.save_clusters(view.id, clusters)
 
+            self._dismiss_progress()
             self.app.call_from_thread(self._refresh_list)
             self.app.call_from_thread(
                 self.notify, f"Created '{name}' with {len(clusters)} clusters"
             )
         except Exception as e:
+            self._dismiss_progress()
             self.app.call_from_thread(self.notify, f"Failed to create view: {e}", severity="error")
 
 

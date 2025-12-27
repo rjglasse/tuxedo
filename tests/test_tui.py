@@ -9,6 +9,7 @@ from textual.widgets import Button, Input, Label, ListView, Select
 
 from tuxedo.models import Author, Cluster, ClusterView, Paper
 from tuxedo.tui import (
+    ClusteringProgressScreen,
     ConfirmDialog,
     CreateClusterDialog,
     EditPaperDialog,
@@ -207,6 +208,47 @@ class TestConfirmDialog:
             assert any("My Title" in t for t in label_texts)
             assert any("My message text" in t for t in label_texts)
             await pilot.press("escape")
+
+
+# ============================================================================
+# ClusteringProgressScreen Tests
+# ============================================================================
+
+
+class TestClusteringProgressScreen:
+    """Tests for the clustering progress screen."""
+
+    async def test_screen_displays_title(self):
+        """Screen displays the title."""
+        dialog = ClusteringProgressScreen("Test Title")
+        app = DialogTestApp(dialog)
+
+        async with app.run_test():
+            labels = dialog.query(Label)
+            label_texts = [str(label.render()) for label in labels]
+            assert any("Test Title" in t for t in label_texts)
+
+    async def test_screen_displays_loading_indicator(self):
+        """Screen displays a loading indicator."""
+        from textual.widgets import LoadingIndicator
+
+        dialog = ClusteringProgressScreen()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test():
+            indicator = dialog.query_one(LoadingIndicator)
+            assert indicator is not None
+
+    async def test_update_status_changes_label(self):
+        """update_status method changes the status label."""
+        dialog = ClusteringProgressScreen()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test() as pilot:
+            dialog.update_status("Processing batch 1 of 5...")
+            await pilot.pause()
+            status_label = dialog.query_one("#status-label", Label)
+            assert "Processing batch 1 of 5" in str(status_label.render())
 
 
 # ============================================================================

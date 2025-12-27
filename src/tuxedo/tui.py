@@ -964,7 +964,13 @@ class CreateClusterDialog(ModalScreen[dict | None]):
 
 
 class AskQuestionDialog(ModalScreen[dict | None]):
-    """A modal dialog for asking a question about papers."""
+    """A modal dialog for asking a question about papers.
+
+    Args:
+        total_papers: Total number of papers in the view
+        cluster_name: Name of the selected cluster (if any)
+        cluster_paper_count: Number of papers in the selected cluster (if any)
+    """
 
     CSS = """
     AskQuestionDialog {
@@ -1007,11 +1013,22 @@ class AskQuestionDialog(ModalScreen[dict | None]):
     }
     """
 
+    def __init__(
+        self,
+        total_papers: int = 0,
+        cluster_name: str | None = None,
+        cluster_paper_count: int = 0,
+    ):
+        super().__init__()
+        self.total_papers = total_papers
+        self.cluster_name = cluster_name
+        self.cluster_paper_count = cluster_paper_count
+
     def compose(self) -> ComposeResult:
         with Vertical(id="ask-dialog"):
             yield Label("Ask a Question", classes="title")
             yield Label(
-                "Ask a question to analyze across all papers in this view",
+                "Ask a question to analyze across papers",
                 classes="hint",
             )
             yield Input(
@@ -1024,6 +1041,22 @@ class AskQuestionDialog(ModalScreen[dict | None]):
                 id="ask-model",
                 prompt="Select model",
             )
+            # Show scope selection if a cluster is selected
+            if self.cluster_name and self.cluster_paper_count > 0:
+                cluster_short = (
+                    self.cluster_name[:20] + "..."
+                    if len(self.cluster_name) > 20
+                    else self.cluster_name
+                )
+                yield Select(
+                    [
+                        (f"All papers ({self.total_papers})", "all"),
+                        (f"This cluster: {cluster_short} ({self.cluster_paper_count})", "cluster"),
+                    ],
+                    value="all",
+                    id="ask-scope",
+                    prompt="Analyze scope",
+                )
             with Horizontal(classes="buttons"):
                 yield Button("Analyze", variant="primary", id="analyze-btn")
                 yield Button("Cancel", id="cancel-btn")
@@ -1041,7 +1074,16 @@ class AskQuestionDialog(ModalScreen[dict | None]):
         model_select = self.query_one("#ask-model", Select)
         model = model_select.value if model_select.value != Select.BLANK else "gpt-4o-mini"
 
-        self.dismiss({"question": question, "model": model})
+        # Get scope if available
+        scope = "all"
+        try:
+            scope_select = self.query_one("#ask-scope", Select)
+            if scope_select.value != Select.BLANK:
+                scope = scope_select.value
+        except Exception:
+            pass  # Scope select not present
+
+        self.dismiss({"question": question, "model": model, "scope": scope})
 
     @on(Button.Pressed, "#cancel-btn")
     def on_cancel(self) -> None:
@@ -1148,6 +1190,23 @@ class NewViewItem(ListItem):
         yield Label("[dim]Organize papers with a different prompt or focus[/dim]")
 
 
+class QuestionListItem(ListItem):
+    """A list item representing a question."""
+
+    def __init__(self, question: Question, answer_count: int):
+        super().__init__()
+        self.question = question
+        self.answer_count = answer_count
+
+    def compose(self) -> ComposeResult:
+        text = self.question.text
+        if len(text) > 60:
+            text = text[:57] + "..."
+        yield Label(f"[bold]{text}[/bold]")
+        date_str = self.question.created_at.strftime("%Y-%m-%d")
+        yield Label(f"[dim]{self.answer_count} answers | {date_str}[/dim]")
+
+
 class ViewSelectionScreen(Screen):
     """Screen for selecting or creating a cluster view.
 
@@ -1172,6 +1231,7 @@ class ViewSelectionScreen(Screen):
         Binding("enter", "select", "Select"),
         Binding("r", "rename", "Rename", priority=True),
         Binding("d", "delete", "Delete", priority=True),
+        Binding("Q", "questions", "Questions"),
         Binding("L", "view_logs", "Logs"),
     ]
 
@@ -1314,6 +1374,10 @@ class ViewSelectionScreen(Screen):
         """Open the log viewer screen."""
         self.app.push_screen(LogViewerScreen())
 
+    def action_questions(self) -> None:
+        """Open the questions screen."""
+        self.app.push_screen(QuestionsScreen(self.project))
+
     def _update_progress(self, status: str) -> None:
         """Update the progress screen status from background thread."""
         if self._progress_screen:
@@ -1409,6 +1473,132 @@ class ViewSelectionScreen(Screen):
         except Exception as e:
             self._dismiss_progress()
             self.app.call_from_thread(self.notify, f"Failed to create view: {e}", severity="error")
+
+
+# ============================================================================
+# Questions Screen
+# ============================================================================
+
+
+class QuestionsScreen(Screen):
+    """Screen for viewing and managing questions.
+
+    Displays all questions asked across the project with their answer counts.
+    Allows users to delete questions they no longer need.
+
+    Bindings:
+        d: Delete the selected question
+        q: Go back
+    """
+
+    BINDINGS = [
+        Binding("q", "back", "Back", priority=True),
+        Binding("d", "delete", "Delete", priority=True),
+    ]
+
+    CSS = """
+    QuestionsScreen {
+        align: center middle;
+    }
+
+    #questions-container {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #questions-container .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #questions-container .subtitle {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #questions-list {
+        height: auto;
+        max-height: 20;
+    }
+
+    #questions-list > ListItem {
+        padding: 1 2;
+    }
+
+    #questions-list > ListItem:hover {
+        background: $surface-lighten-1;
+    }
+
+    #questions-list > ListItem.--highlight {
+        background: $surface-lighten-2;
+    }
+    """
+
+    def __init__(self, project: Project):
+        super().__init__()
+        self.project = project
+        self._pending_delete: Question | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="questions-container"):
+            yield Static("Questions", classes="title")
+            yield Static("[dim]Questions asked across all papers[/dim]", classes="subtitle")
+            yield ListView(id="questions-list")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+        self.query_one("#questions-list", ListView).focus()
+
+    def _refresh_list(self) -> None:
+        """Refresh the questions list."""
+        list_view = self.query_one("#questions-list", ListView)
+        list_view.clear()
+
+        questions = self.project.get_questions()
+        if not questions:
+            list_view.append(
+                ListItem(Label("[dim]No questions yet. Press 'a' in cluster view to ask.[/dim]"))
+            )
+            return
+
+        for question in questions:
+            count = self.project.get_question_answer_count(question.id)
+            list_view.append(QuestionListItem(question, count))
+
+    def action_back(self) -> None:
+        """Go back to the previous screen."""
+        self.app.pop_screen()
+
+    def action_delete(self) -> None:
+        """Delete the selected question."""
+        list_view = self.query_one("#questions-list", ListView)
+        if list_view.highlighted_child and isinstance(
+            list_view.highlighted_child, QuestionListItem
+        ):
+            question = list_view.highlighted_child.question
+            self._pending_delete = question
+
+            def handle_confirm(confirmed: bool) -> None:
+                if confirmed and self._pending_delete:
+                    self.project.delete_question(self._pending_delete.id)
+                    self.notify("Deleted question and its answers")
+                    self._refresh_list()
+                self._pending_delete = None
+
+            # Truncate question for dialog
+            q_short = question.text[:50] + "..." if len(question.text) > 50 else question.text
+            self.app.push_screen(
+                ConfirmDialog(
+                    "Delete Question",
+                    f"Delete '{q_short}' and all its answers?",
+                ),
+                handle_confirm,
+            )
 
 
 # ============================================================================
@@ -1855,6 +2045,7 @@ class ClusterScreen(Screen):
         Binding("escape", "clear_search", "Clear", show=False),
         Binding("e", "expand_all", "Expand"),
         Binding("c", "collapse_all", "Collapse"),
+        Binding("Q", "questions", "Questions"),
         Binding("L", "view_logs", "Logs"),
         Binding("?", "help", "Help"),
     ]
@@ -2216,24 +2407,45 @@ class ClusterScreen(Screen):
             self.app.call_from_thread(self.notify, f"Recluster failed: {e}", severity="error")
 
     def action_ask_question(self) -> None:
-        """Ask a question to analyze across all papers."""
+        """Ask a question to analyze across papers."""
         if not self.papers:
             self.notify("No papers to analyze", severity="warning")
             return
+
+        # Check if a cluster is selected
+        cluster = self._tree.get_selected_cluster() if self._tree else None
+        cluster_paper_ids: list[str] | None = None
+        if cluster:
+            cluster_paper_ids = cluster.paper_ids
 
         def handle_question(result: dict | None) -> None:
             if result:
                 question_text = result["question"]
                 model = result["model"]
+                scope = result.get("scope", "all")
+
+                # Determine which papers to analyze
+                if scope == "cluster" and cluster_paper_ids:
+                    papers_to_analyze = [p for p in self.papers if p.id in cluster_paper_ids]
+                else:
+                    papers_to_analyze = self.papers
 
                 # Show progress screen
                 self._analysis_progress = AnalysisProgressScreen(question_text)
                 self.app.push_screen(self._analysis_progress)
 
                 # Start analysis in background
-                self._analyze_papers(question_text, model)
+                self._analyze_papers(question_text, model, papers_to_analyze)
 
-        self.app.push_screen(AskQuestionDialog(), handle_question)
+        # Pass cluster context if available
+        self.app.push_screen(
+            AskQuestionDialog(
+                total_papers=len(self.papers),
+                cluster_name=cluster.name if cluster else None,
+                cluster_paper_count=len(cluster_paper_ids) if cluster_paper_ids else 0,
+            ),
+            handle_question,
+        )
 
     def _update_analysis_progress(self, status: str) -> None:
         """Update the analysis progress screen status from background thread."""
@@ -2247,9 +2459,19 @@ class ClusterScreen(Screen):
             self._analysis_progress = None
 
     @work(thread=True)
-    def _analyze_papers(self, question_text: str, model: str) -> None:
-        """Analyze all papers to answer a question."""
+    def _analyze_papers(
+        self, question_text: str, model: str, papers: list[Paper] | None = None
+    ) -> None:
+        """Analyze papers to answer a question.
+
+        Args:
+            question_text: The question to answer
+            model: The LLM model to use
+            papers: Papers to analyze (defaults to all papers in view)
+        """
         from tuxedo.analysis import PaperAnalyzer
+
+        papers_to_analyze = papers if papers is not None else self.papers
 
         try:
             self._update_analysis_progress("Creating question...")
@@ -2266,9 +2488,9 @@ class ClusterScreen(Screen):
             def progress_callback(current: int, total: int, message: str) -> None:
                 self._update_analysis_progress(message)
 
-            # Analyze all papers
+            # Analyze papers
             answers = analyzer.analyze_papers(
-                papers=self.papers,
+                papers=papers_to_analyze,
                 question=question_text,
                 question_id=question.id,
                 progress_callback=progress_callback,
@@ -2338,6 +2560,10 @@ class ClusterScreen(Screen):
     def action_view_logs(self) -> None:
         """Open the log viewer screen."""
         self.app.push_screen(LogViewerScreen())
+
+    def action_questions(self) -> None:
+        """Open the questions screen."""
+        self.app.push_screen(QuestionsScreen(self.project))
 
     def action_export(self) -> None:
         """Export the current view to a file or clipboard."""

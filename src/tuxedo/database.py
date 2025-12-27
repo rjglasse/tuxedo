@@ -621,6 +621,14 @@ class Database:
             ).fetchall()
             return [self._row_to_paper_answer(row) for row in rows]
 
+    def get_answer_count_for_question(self, question_id: str) -> int:
+        """Get the number of answers for a question."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM paper_answers WHERE question_id = ?",
+                (question_id,),
+            ).fetchone()[0]
+
     def _row_to_paper_answer(self, row: sqlite3.Row) -> PaperAnswer:
         """Convert a database row to a PaperAnswer model."""
         created_at = row["created_at"]

@@ -282,3 +282,7 @@ class Project:
             if question:
                 result.append((question, answer))
         return result
+
+    def get_question_answer_count(self, question_id: str) -> int:
+        """Get the number of answers for a question."""
+        return self.db.get_answer_count_for_question(question_id)

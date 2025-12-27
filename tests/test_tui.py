@@ -7,7 +7,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Label, ListView, Select
 
-from tuxedo.models import Author, Cluster, ClusterView, Paper
+from tuxedo.models import Author, Cluster, ClusterView, Paper, Question
 from tuxedo.tui import (
     AnalysisProgressScreen,
     AskQuestionDialog,
@@ -18,6 +18,8 @@ from tuxedo.tui import (
     ExportDialog,
     LogViewerScreen,
     MoveToClusterDialog,
+    QuestionListItem,
+    QuestionsScreen,
     ReclusterDialog,
     RenameClusterDialog,
     ViewListItem,
@@ -117,6 +119,18 @@ def mock_project(sample_paper, sample_clusters, sample_view):
     project.get_pdf_path.return_value = Path("/tmp/test.pdf")
     project.get_answers_with_questions.return_value = []
     return project
+
+
+@pytest.fixture
+def sample_question():
+    """Create a sample question for testing."""
+    from datetime import datetime
+
+    return Question(
+        id="q1",
+        text="What methodology does this paper use?",
+        created_at=datetime(2024, 6, 15, 14, 30),
+    )
 
 
 # ============================================================================
@@ -808,6 +822,144 @@ class TestNewViewItem:
             app = pilot.app
             item = app.query_one(NewViewItem)
             assert item is not None
+
+
+# ============================================================================
+# QuestionListItem Tests
+# ============================================================================
+
+
+class TestQuestionListItem:
+    """Tests for the question list item widget."""
+
+    async def test_displays_question_info(self, sample_question):
+        """Widget displays question text and answer count."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield QuestionListItem(sample_question, answer_count=5)
+
+        async with TestApp().run_test() as pilot:
+            app = pilot.app
+            item = app.query_one(QuestionListItem)
+            assert item.question == sample_question
+            assert item.answer_count == 5
+
+    async def test_truncates_long_question(self):
+        """Long questions are truncated."""
+        from datetime import datetime
+
+        long_question = Question(
+            id="q2",
+            text="A" * 100,  # Very long question
+            created_at=datetime(2024, 1, 1),
+        )
+
+        class TestApp(App):
+            def compose(self_app):
+                yield QuestionListItem(long_question, answer_count=0)
+
+        async with TestApp().run_test() as pilot:
+            app = pilot.app
+            item = app.query_one(QuestionListItem)
+            # Question should be stored
+            assert item.question == long_question
+
+
+# ============================================================================
+# QuestionsScreen Tests
+# ============================================================================
+
+
+class TestQuestionsScreen:
+    """Tests for the questions screen."""
+
+    async def test_screen_initializes(self, mock_project):
+        """Screen initializes with project."""
+        mock_project.get_questions.return_value = []
+        mock_project.get_question_answer_count.return_value = 0
+
+        screen = QuestionsScreen(mock_project)
+        assert screen.project == mock_project
+
+    async def test_question_list_item_stored(self, mock_project, sample_question):
+        """QuestionListItem stores question and answer count."""
+        item = QuestionListItem(sample_question, answer_count=3)
+        assert item.question == sample_question
+        assert item.answer_count == 3
+
+
+# ============================================================================
+# AskQuestionDialog Scope Tests
+# ============================================================================
+
+
+class TestAskQuestionDialogScope:
+    """Tests for scope selection in AskQuestionDialog."""
+
+    async def test_no_scope_without_cluster_context(self):
+        """No scope selection when no cluster context provided."""
+        dialog = AskQuestionDialog()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            # Should not have scope select
+            scope_selects = dialog.query("#ask-scope")
+            assert len(scope_selects) == 0
+            await pilot.press("escape")
+
+    async def test_scope_shown_with_cluster_context(self):
+        """Scope selection shown when cluster context provided."""
+        dialog = AskQuestionDialog(
+            total_papers=20,
+            cluster_name="Test Cluster",
+            cluster_paper_count=5,
+        )
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            # Should have scope select
+            scope_selects = dialog.query("#ask-scope")
+            assert len(scope_selects) == 1
+            await pilot.press("escape")
+
+    async def test_default_scope_is_all(self):
+        """Default scope is 'all' papers."""
+        dialog = AskQuestionDialog(
+            total_papers=20,
+            cluster_name="Test Cluster",
+            cluster_paper_count=5,
+        )
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            question_input = dialog.query_one("#question-input", Input)
+            question_input.value = "Test question"
+            await pilot.click("#analyze-btn")
+
+        assert app.result is not None
+        assert app.result["scope"] == "all"
+
+    async def test_scope_cluster_selection(self):
+        """Cluster scope can be selected."""
+        dialog = AskQuestionDialog(
+            total_papers=20,
+            cluster_name="Test Cluster",
+            cluster_paper_count=5,
+        )
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            question_input = dialog.query_one("#question-input", Input)
+            question_input.value = "Test question"
+
+            scope_select = dialog.query_one("#ask-scope", Select)
+            scope_select.value = "cluster"
+
+            await pilot.click("#analyze-btn")
+
+        assert app.result is not None
+        assert app.result["scope"] == "cluster"
 
 
 # ============================================================================

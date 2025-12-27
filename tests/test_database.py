@@ -556,6 +556,21 @@ class TestPaperAnswerOperations:
         assert len(answers) == 1
         assert answers[0].paper_id == "paper1"
 
+    def test_get_answer_count_for_question(self, db, sample_paper, sample_question, sample_answer):
+        """Answer count for a question can be retrieved."""
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+
+        # Initially no answers
+        assert db.get_answer_count_for_question("q1") == 0
+
+        # Add an answer
+        db.add_paper_answer(sample_answer)
+        assert db.get_answer_count_for_question("q1") == 1
+
+        # Non-existent question returns 0
+        assert db.get_answer_count_for_question("nonexistent") == 0
+
     def test_delete_question_cascades_to_answers(
         self, db, sample_paper, sample_question, sample_answer
     ):

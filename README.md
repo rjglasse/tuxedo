@@ -172,6 +172,7 @@ Themes are developed incrementally: the first batch establishes themes, subseque
 | `n` | New clustering view |
 | `r` | Rename view |
 | `d` | Delete view |
+| `Q` | View all questions |
 | `L` | View logs |
 | `q` | Quit |
 
@@ -186,7 +187,8 @@ Themes are developed incrementally: the first batch establishes themes, subseque
 | `d` | Delete paper from project |
 | `r` | Rename selected cluster |
 | `R` | Recluster with feedback |
-| `a` | Ask question (analyze all papers) |
+| `a` | Ask question (analyze papers) |
+| `Q` | View all questions |
 | `x` | Export view |
 | `e` / `c` | Expand / Collapse all |
 | `L` | View logs |

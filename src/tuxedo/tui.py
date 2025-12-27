@@ -150,6 +150,7 @@ class ConfirmDialog(ModalScreen[bool]):
 
     #dialog Button {
         margin: 0 1;
+        border: none;
     }
     """
 
@@ -220,10 +221,13 @@ class EditPaperDialog(ModalScreen[dict | None]):
 
     #edit-dialog .field-label {
         color: $text-muted;
+        height: 1;
+        margin: 0;
+        padding: 0;
     }
 
     #edit-dialog Input {
-        margin-bottom: 0;
+        margin: 0 0 1 0;
     }
 
     #edit-dialog .buttons {
@@ -234,26 +238,31 @@ class EditPaperDialog(ModalScreen[dict | None]):
 
     #edit-dialog .buttons Button {
         margin: 0 1;
+        border: none;
     }
 
     #edit-dialog .row {
         layout: horizontal;
         height: auto;
+        margin: 0;
     }
 
     #edit-dialog .row > Vertical {
         width: 1fr;
         padding-right: 1;
+        height: auto;
     }
 
     #edit-dialog .row3 {
         layout: horizontal;
         height: auto;
+        margin: 0;
     }
 
     #edit-dialog .row3 > Vertical {
         width: 1fr;
         padding-right: 1;
+        height: auto;
     }
     """
 
@@ -465,6 +474,7 @@ class ReclusterDialog(ModalScreen[str | None]):
 
     #recluster-dialog Button {
         margin-right: 1;
+        border: none;
     }
     """
 
@@ -539,6 +549,7 @@ class RenameClusterDialog(ModalScreen[dict | None]):
 
     #rename-dialog Button {
         margin-right: 1;
+        border: none;
     }
     """
 
@@ -639,6 +650,7 @@ class ExportDialog(ModalScreen[dict | None]):
 
     #export-dialog Button {
         margin-right: 1;
+        border: none;
     }
     """
 
@@ -720,6 +732,7 @@ class CreateClusterDialog(ModalScreen[dict | None]):
 
     #create-dialog Button {
         margin-right: 1;
+        border: none;
     }
     """
 

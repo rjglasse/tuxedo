@@ -683,7 +683,9 @@ Please reorganize the papers based on this feedback while maintaining the overal
         clusters = self._parse_clusters(result.get("clusters", []))
         relevance_scores = result.get("relevance_scores", {})
         relevance_scores = {k: int(v) for k, v in relevance_scores.items()}
-        self.log.info(f"Recluster returned {len(clusters)} clusters, {len(relevance_scores)} scores")
+        self.log.info(
+            f"Recluster returned {len(clusters)} clusters, {len(relevance_scores)} scores"
+        )
         return clusters, relevance_scores
 
     def _clusters_to_dict(self, clusters: list[Cluster]) -> list[dict]:

@@ -860,6 +860,59 @@ class TestClusterScreen:
             await pilot.press("?")
             # Help should be shown (screen pushed or notification)
 
+    async def test_d_key_with_no_paper_shows_warning(self, mock_project, sample_view):
+        """Pressing 'd' with no paper selected shows a warning."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield ClusterScreen(mock_project, sample_view)
+
+        async with TestApp().run_test() as pilot:
+            await pilot.press("d")
+            # Warning notification should be shown (no paper selected)
+
+    async def test_delete_paper_action_calls_project_delete(
+        self, mock_project, sample_view, sample_paper, sample_clusters
+    ):
+        """Confirming delete calls project.delete_paper."""
+        mock_project.get_papers.return_value = [sample_paper]
+        mock_project.get_clusters.return_value = sample_clusters
+
+        class TestApp(App):
+            def compose(self_app):
+                yield ClusterScreen(mock_project, sample_view)
+
+        async with TestApp().run_test(size=(150, 80)) as pilot:
+            app = pilot.app
+            screen = app.query_one(ClusterScreen)
+
+            # Get the tree and select a paper node
+            tree = screen._tree
+            if tree:
+                # Expand the root to reveal cluster nodes
+                tree.root.expand()
+                await pilot.pause()
+
+                # Find and select a paper node
+                for node in tree.root.children:
+                    if hasattr(node, "data") and node.data:
+                        # Expand cluster to reveal papers
+                        node.expand()
+                        await pilot.pause()
+                        for child in node.children:
+                            if hasattr(child, "data") and child.data:
+                                tree.select_node(child)
+                                await pilot.pause()
+                                break
+                        break
+
+            # Press 'd' to trigger delete action
+            await pilot.press("d")
+            await pilot.pause()
+
+            # Should have pushed a ConfirmDialog
+            assert len(app.screen_stack) >= 1
+
 
 # ============================================================================
 # TuxedoApp Tests

@@ -1455,6 +1455,7 @@ class ClusterScreen(Screen):
         p: Open the local PDF file
         m: Move paper to a different cluster
         E: Edit paper metadata
+        d: Delete paper from project
         r: Rename the selected cluster
         R: Recluster papers with feedback
         x: Export view to file or clipboard
@@ -1469,6 +1470,7 @@ class ClusterScreen(Screen):
         Binding("p", "open_pdf", "PDF"),
         Binding("m", "move_paper", "Move"),
         Binding("E", "edit_paper", "Edit"),
+        Binding("d", "delete_paper", "Delete"),
         Binding("r", "rename_cluster", "Rename"),
         Binding("R", "recluster", "Recluster"),
         Binding("x", "export", "Export"),
@@ -1748,6 +1750,48 @@ class ClusterScreen(Screen):
 
         self.app.push_screen(EditPaperDialog(paper), handle_edit)
 
+    def action_delete_paper(self) -> None:
+        """Delete selected paper from the project."""
+        if not self._tree:
+            return
+
+        paper = self._tree.get_selected_paper()
+        if not paper:
+            self.notify("Select a paper to delete", severity="warning")
+            return
+
+        def handle_confirm(confirmed: bool) -> None:
+            if confirmed and paper:
+                self.project.delete_paper(paper.id)
+
+                # Remove paper from local lists
+                self.papers = [p for p in self.papers if p.id != paper.id]
+                self._papers_by_id.pop(paper.id, None)
+
+                # Refresh clusters and tree
+                self.clusters = self.project.get_clusters(self.view.id)
+                if self._tree:
+                    expanded = self._tree.get_expanded_state()
+                    self._tree.all_papers = self.papers
+                    self._tree._paper_map = self._papers_by_id
+                    self._tree.clusters = self.clusters
+                    self._tree._build_tree()
+                    self._tree.restore_expanded_state(expanded)
+
+                # Clear detail panel
+                if self._detail:
+                    self._detail.remove_children()
+                    self._detail.mount(PaperDetail(None))
+
+                self.notify(f"Deleted '{paper.display_title}'")
+
+        self.app.push_screen(
+            ConfirmDialog(
+                "Delete Paper", f"Delete '{paper.display_title}'? This cannot be undone."
+            ),
+            handle_confirm,
+        )
+
     def action_recluster(self) -> None:
         """Recluster papers with feedback."""
         if not self.clusters:
@@ -1822,7 +1866,7 @@ class ClusterScreen(Screen):
 
     def action_help(self) -> None:
         self.notify(
-            "Tip: Select a paper for o/p/m/E actions, or a cluster for r/R actions",
+            "Tip: Select a paper for o/p/m/E/d actions, or a cluster for r/R actions",
             timeout=5,
         )
 

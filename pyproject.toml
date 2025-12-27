@@ -42,5 +42,8 @@ asyncio_default_fixture_loop_scope = "function"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.1",
+    "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
+    "radon>=6.0.1",
 ]

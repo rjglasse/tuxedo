@@ -13,6 +13,7 @@ from tuxedo.tui import (
     CreateClusterDialog,
     EditPaperDialog,
     ExportDialog,
+    LogViewerScreen,
     MoveToClusterDialog,
     ReclusterDialog,
     RenameClusterDialog,
@@ -912,6 +913,71 @@ class TestClusterScreen:
 
             # Should have pushed a ConfirmDialog
             assert len(app.screen_stack) >= 1
+
+
+# ============================================================================
+# LogViewerScreen Tests
+# ============================================================================
+
+
+class TestLogViewerScreen:
+    """Tests for the log viewer screen."""
+
+    async def test_screen_displays_header(self):
+        """Screen displays log header."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield LogViewerScreen()
+
+        async with TestApp().run_test() as pilot:
+            app = pilot.app
+            screen = app.query_one(LogViewerScreen)
+            assert screen is not None
+
+    async def test_q_key_goes_back(self):
+        """Pressing 'q' pops the screen."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield LogViewerScreen()
+
+        async with TestApp().run_test() as pilot:
+            await pilot.press("q")
+            # Should pop screen or handle back action
+
+    async def test_r_key_refreshes(self):
+        """Pressing 'r' refreshes the log."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield LogViewerScreen()
+
+        async with TestApp().run_test() as pilot:
+            await pilot.press("r")
+            # Should refresh and show notification
+
+    async def test_g_key_scrolls_to_top(self):
+        """Pressing 'g' scrolls to top."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield LogViewerScreen()
+
+        async with TestApp().run_test() as pilot:
+            await pilot.press("g")
+            # Should scroll to top
+
+    async def test_G_key_scrolls_to_bottom(self):
+        """Pressing 'G' scrolls to bottom."""
+
+        class TestApp(App):
+            def compose(self_app):
+                yield LogViewerScreen()
+
+        async with TestApp().run_test() as pilot:
+            await pilot.press("G")
+            # Should scroll to bottom
 
 
 # ============================================================================

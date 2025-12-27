@@ -864,6 +864,7 @@ class ViewSelectionScreen(Screen):
     Bindings:
         n: Create a new clustering view
         d: Delete the selected view
+        L: View application logs
         q: Quit the application
     """
 
@@ -872,6 +873,7 @@ class ViewSelectionScreen(Screen):
         Binding("n", "new_view", "New", priority=True),
         Binding("enter", "select", "Select"),
         Binding("d", "delete", "Delete", priority=True),
+        Binding("L", "view_logs", "Logs"),
     ]
 
     CSS = """
@@ -989,6 +991,10 @@ class ViewSelectionScreen(Screen):
                 ConfirmDialog("Delete View", f"Delete '{view.name}' and its clusters?"),
                 handle_confirm,
             )
+
+    def action_view_logs(self) -> None:
+        """Open the log viewer screen."""
+        self.app.push_screen(LogViewerScreen())
 
     @work(thread=True)
     def _create_new_view(self, config: dict) -> None:
@@ -1461,6 +1467,7 @@ class ClusterScreen(Screen):
         x: Export view to file or clipboard
         e: Expand all tree nodes
         c: Collapse all tree nodes
+        L: View application logs
         q: Go back to view selection
     """
 
@@ -1478,6 +1485,7 @@ class ClusterScreen(Screen):
         Binding("escape", "clear_search", "Clear", show=False),
         Binding("e", "expand_all", "Expand"),
         Binding("c", "collapse_all", "Collapse"),
+        Binding("L", "view_logs", "Logs"),
         Binding("?", "help", "Help"),
     ]
 
@@ -1870,6 +1878,10 @@ class ClusterScreen(Screen):
             timeout=5,
         )
 
+    def action_view_logs(self) -> None:
+        """Open the log viewer screen."""
+        self.app.push_screen(LogViewerScreen())
+
     def action_export(self) -> None:
         """Export the current view to a file or clipboard."""
 
@@ -1931,6 +1943,160 @@ class ClusterScreen(Screen):
                     self.notify("Clipboard copy failed - save to file instead", severity="warning")
 
         self.app.push_screen(ExportDialog(self.view.name), handle_export)
+
+
+# ============================================================================
+# Log Viewer Screen
+# ============================================================================
+
+
+class LogViewerScreen(Screen):
+    """Screen for viewing the current log file.
+
+    Displays the contents of the current Tuxedo log file with auto-scroll
+    to the bottom. Supports refreshing to see new log entries.
+
+    Bindings:
+        r: Refresh log content
+        q: Go back to previous screen
+    """
+
+    BINDINGS = [
+        Binding("q", "back", "Back", priority=True),
+        Binding("r", "refresh", "Refresh"),
+        Binding("g", "go_top", "Top"),
+        Binding("G", "go_bottom", "Bottom"),
+    ]
+
+    CSS = """
+    LogViewerScreen {
+        background: $surface;
+    }
+
+    LogViewerScreen #log-header {
+        dock: top;
+        height: 3;
+        padding: 1 2;
+        background: $surface;
+        border-bottom: solid $primary;
+    }
+
+    LogViewerScreen #log-content {
+        padding: 1 2;
+        overflow-y: auto;
+    }
+
+    LogViewerScreen .log-line {
+        color: $text;
+    }
+
+    LogViewerScreen .log-line-error {
+        color: $error;
+    }
+
+    LogViewerScreen .log-line-warning {
+        color: $warning;
+    }
+
+    LogViewerScreen .log-line-info {
+        color: $text;
+    }
+
+    LogViewerScreen .log-line-debug {
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._log_path: str | None = None
+
+    def compose(self) -> ComposeResult:
+        from tuxedo.logging import get_log_file
+
+        log_file = get_log_file()
+        self._log_path = str(log_file) if log_file else "No log file"
+
+        yield Static(
+            f"[bold]Log Viewer[/bold] | {self._log_path}",
+            id="log-header",
+        )
+        yield Vertical(id="log-content")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Load log content when screen opens."""
+        self._load_log()
+        # Scroll to bottom after a brief delay to ensure content is rendered
+        self.set_timer(0.1, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self) -> None:
+        """Scroll to the bottom of the log."""
+        container = self.query_one("#log-content", Vertical)
+        container.scroll_end(animate=False)
+
+    def _load_log(self) -> None:
+        """Load and display log file content."""
+        from tuxedo.logging import get_log_file
+
+        container = self.query_one("#log-content", Vertical)
+        container.remove_children()
+
+        log_file = get_log_file()
+        if not log_file or not log_file.exists():
+            container.mount(Static("[dim]No log file found[/dim]"))
+            return
+
+        try:
+            content = log_file.read_text(encoding="utf-8")
+            lines = content.splitlines()
+
+            # Show last 500 lines to avoid performance issues
+            if len(lines) > 500:
+                lines = lines[-500:]
+                container.mount(
+                    Static(
+                        f"[dim]... showing last 500 of {len(content.splitlines())} lines ...[/dim]"
+                    )
+                )
+
+            for line in lines:
+                # Color-code based on log level
+                if "| ERROR" in line or "| CRITICAL" in line:
+                    style_class = "log-line-error"
+                elif "| WARNING" in line:
+                    style_class = "log-line-warning"
+                elif "| DEBUG" in line:
+                    style_class = "log-line-debug"
+                else:
+                    style_class = "log-line-info"
+
+                container.mount(Static(line, classes=f"log-line {style_class}"))
+
+            if not lines:
+                container.mount(Static("[dim]Log file is empty[/dim]"))
+
+        except Exception as e:
+            container.mount(Static(f"[red]Error reading log: {e}[/red]"))
+
+    def action_back(self) -> None:
+        """Go back to previous screen."""
+        self.app.pop_screen()
+
+    def action_refresh(self) -> None:
+        """Refresh log content."""
+        self._load_log()
+        self.set_timer(0.1, self._scroll_to_bottom)
+        self.notify("Log refreshed")
+
+    def action_go_top(self) -> None:
+        """Scroll to top of log."""
+        container = self.query_one("#log-content", Vertical)
+        container.scroll_home(animate=False)
+
+    def action_go_bottom(self) -> None:
+        """Scroll to bottom of log."""
+        self._scroll_to_bottom()
 
 
 # ============================================================================

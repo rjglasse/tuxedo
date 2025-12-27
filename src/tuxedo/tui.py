@@ -1464,9 +1464,12 @@ class ViewSelectionScreen(Screen):
                 allow_new_categories=True,  # TUI defaults to flexible mode
             )
             self.project.save_clusters(view.id, clusters)
-            # Update paper relevance scores
+            # Update paper relevance scores (keep highest)
+            papers_by_id = {p.id: p for p in papers}
             for paper_id, score in relevance_scores.items():
-                self.project.update_paper(paper_id, {"relevance_score": score})
+                paper = papers_by_id.get(paper_id)
+                if paper and (paper.relevance_score is None or score > paper.relevance_score):
+                    self.project.update_paper(paper_id, {"relevance_score": score})
 
             self._dismiss_progress()
             self.app.call_from_thread(self._refresh_list)
@@ -2401,10 +2404,13 @@ class ClusterScreen(Screen):
                 current_clusters=self.clusters,
             )
 
-            # Save new clusters and update relevance scores
+            # Save new clusters and update relevance scores (keep highest)
             self.project.save_clusters(self.view.id, new_clusters)
+            papers_by_id = {p.id: p for p in self.papers}
             for paper_id, score in relevance_scores.items():
-                self.project.update_paper(paper_id, {"relevance_score": score})
+                paper = papers_by_id.get(paper_id)
+                if paper and (paper.relevance_score is None or score > paper.relevance_score):
+                    self.project.update_paper(paper_id, {"relevance_score": score})
             self.clusters = new_clusters
             # Refresh papers to get updated relevance scores
             self.papers = self.project.get_papers()

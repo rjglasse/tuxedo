@@ -6,13 +6,14 @@ A simple app for organizing systematic literature review papers using LLMs.
 
 ## How it works
 
-We begin with a collection of papers that have been gathered through a data-driven or snowballing systematic literature review.
-- Create a project with a guiding research question
-- Process all the PDFs to extract metadata and content
-- Cluster papers based on the research question
-- View proposed clusters and optionally recategorise papers
-- Create new cluster views (e.g. type of experiement, method, etc)
-- Export to LaTeX / BiBTeX
+Start with papers from a systematic literature review:
+
+1. **Initialize** — Create a project with your research question
+2. **Process** — Extract metadata and content from PDFs via Grobid
+3. **Cluster** — LLM organizes papers into thematic groups based on your question, auto-discovered themes, or predefined categories
+4. **Analyze** — Ask questions across all papers (e.g., "What methodology?" or "What are the key findings?") with progressive content extraction
+5. **Refine** — Move papers between clusters, rename themes, create alternative views
+6. **Export** — Generate LaTeX skeletons, BibTeX, CSV, RIS, or Markdown
 
 ## Quick Start
 
@@ -168,7 +169,9 @@ Themes are developed incrementally: the first batch establishes themes, subseque
 | Key | Action |
 |-----|--------|
 | `n` | New clustering view |
+| `r` | Rename view |
 | `d` | Delete view |
+| `L` | View logs |
 | `q` | Quit |
 
 ### Cluster View Screen
@@ -179,10 +182,13 @@ Themes are developed incrementally: the first batch establishes themes, subseque
 | `p` | Open local PDF |
 | `m` | Move paper to different cluster |
 | `E` | Edit paper metadata |
+| `d` | Delete paper from project |
 | `r` | Rename selected cluster |
 | `R` | Recluster with feedback |
+| `a` | Ask question (analyze all papers) |
 | `x` | Export view |
 | `e` / `c` | Expand / Collapse all |
+| `L` | View logs |
 | `?` | Show help |
 | `q` | Back |
 

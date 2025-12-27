@@ -1326,5 +1326,72 @@ def papers():
     console.print(table)
 
 
+@main.command("export-questions")
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    default=Path("questions.csv"),
+    help="Output file (default: questions.csv)",
+)
+def export_questions(output: Path):
+    """Export all questions and answers to CSV.
+
+    Creates a table with columns: doi, title, q1, q2, q3, ...
+    where each question column contains the answer for that paper.
+    """
+    import csv
+    from io import StringIO
+
+    project = Project.load()
+    if not project:
+        console.print("[red]No project found. Run 'tuxedo init' first.[/red]")
+        raise click.Abort()
+
+    questions = project.get_questions()
+    if not questions:
+        console.print("[yellow]No questions found. Use 'a' in the TUI to ask questions.[/yellow]")
+        return
+
+    paper_list = project.get_papers()
+    if not paper_list:
+        console.print("[yellow]No papers found.[/yellow]")
+        return
+
+    # Build a map of (paper_id, question_id) -> answer
+    answers_map: dict[tuple[str, str], str] = {}
+    for paper in paper_list:
+        for question, answer in project.get_answers_with_questions(paper.id):
+            answers_map[(paper.id, question.id)] = answer.answer
+
+    # Sort questions by creation date
+    questions_sorted = sorted(questions, key=lambda q: q.created_at)
+
+    # Build CSV
+    output_buffer = StringIO()
+    writer = csv.writer(output_buffer)
+
+    # Header row: doi, title, q1_text, q2_text, ...
+    header = ["doi", "title"]
+    for i, q in enumerate(questions_sorted, 1):
+        # Truncate question text for header
+        q_short = q.text[:50] + "..." if len(q.text) > 50 else q.text
+        header.append(f"Q{i}: {q_short}")
+    writer.writerow(header)
+
+    # Data rows
+    for paper in paper_list:
+        row = [paper.doi or "", paper.title]
+        for q in questions_sorted:
+            answer = answers_map.get((paper.id, q.id), "")
+            row.append(answer)
+        writer.writerow(row)
+
+    csv_content = output_buffer.getvalue()
+
+    output.write_text(csv_content)
+    console.print(f"[green]Exported {len(questions_sorted)} questions across {len(paper_list)} papers to {output}[/green]")
+
+
 if __name__ == "__main__":
     main()

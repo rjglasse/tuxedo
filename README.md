@@ -61,6 +61,7 @@ Each worker creates its own connection to Grobid. Adjust based on your Grobid se
 | `view` | Interactive TUI |
 | `views` | List clustering views |
 | `export <view_id> -f FORMAT` | Export (bibtex, csv, ris, markdown, json, latex) |
+| `export-questions` | Export questions & answers to CSV |
 | `papers` | List all papers |
 | `delete-paper <id>` | Remove a paper from the project |
 | `delete-view <id>` | Remove a clustering view |

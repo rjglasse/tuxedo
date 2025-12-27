@@ -504,3 +504,486 @@ class TestParallelProcessingWorkflow:
         assert clamp_workers(8) == 8
         assert clamp_workers(10) == 8
         assert clamp_workers(100) == 8
+
+
+class TestFullWorkflowIntegration:
+    """End-to-end workflow tests."""
+
+    @pytest.fixture
+    def full_project(self, tmp_path, sample_tei_xml, sample_pdf_content, httpx_mock):
+        """Create a fully populated project with papers and clusters."""
+        # Create source PDFs
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        for i in range(3):
+            (source_dir / f"paper{i}.pdf").write_bytes(sample_pdf_content + str(i).encode())
+
+        # Mock Grobid responses with varying metadata
+        for i in range(3):
+            httpx_mock.add_response(
+                url="http://localhost:8070/api/processFulltextDocument",
+                content=sample_tei_xml.replace("Test Paper Title", f"Paper {i}: Research Topic"),
+                status_code=200,
+            )
+
+        # Create project
+        project = Project.create(
+            root=tmp_path / "project",
+            name="Full Test Project",
+            research_question="What are the effects of X on Y?",
+            source_pdfs=source_dir,
+        )
+
+        # Process PDFs
+        with GrobidClient("http://localhost:8070") as client:
+            for pdf_path in project.list_pdfs():
+                paper = client.process_pdf(pdf_path)
+                project.add_paper(paper)
+
+        # Create clustering view with mock response
+        mock_response = Mock()
+        mock_response.choices = [
+            Mock(
+                message=Mock(
+                    content=json.dumps(
+                        {
+                            "clusters": [
+                                {
+                                    "name": "Methodology Studies",
+                                    "description": "Papers about research methodology",
+                                    "paper_ids": [project.get_papers()[0].id],
+                                    "subclusters": [],
+                                },
+                                {
+                                    "name": "Application Studies",
+                                    "description": "Papers applying techniques",
+                                    "paper_ids": [
+                                        project.get_papers()[1].id,
+                                        project.get_papers()[2].id,
+                                    ],
+                                    "subclusters": [],
+                                },
+                            ]
+                        }
+                    )
+                )
+            )
+        ]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            view = project.create_view("By Theme", "Group by theme")
+            clusterer = PaperClusterer()
+            clusters = clusterer.cluster_papers(project.get_papers(), view.prompt)
+            project.save_clusters(view.id, clusters)
+
+        return project
+
+    def test_complete_workflow_paper_count(self, full_project):
+        """Complete workflow results in correct paper count."""
+        assert full_project.paper_count() == 3
+
+    def test_complete_workflow_view_created(self, full_project):
+        """Complete workflow creates clustering view."""
+        assert full_project.view_count() == 1
+        views = full_project.get_views()
+        assert views[0].name == "By Theme"
+
+    def test_complete_workflow_clusters_assigned(self, full_project):
+        """Complete workflow assigns papers to clusters."""
+        views = full_project.get_views()
+        clusters = full_project.get_clusters(views[0].id)
+
+        assert len(clusters) == 2
+        total_assigned = sum(len(c.paper_ids) for c in clusters)
+        assert total_assigned == 3
+
+    def test_complete_workflow_papers_retrievable(self, full_project):
+        """Papers are retrievable by ID after full workflow."""
+        papers = full_project.get_papers()
+        paper_ids = {p.id for p in papers}
+
+        views = full_project.get_views()
+        clusters = full_project.get_clusters(views[0].id)
+
+        for cluster in clusters:
+            for paper_id in cluster.paper_ids:
+                assert paper_id in paper_ids
+
+    def test_complete_workflow_export_works(self, full_project):
+        """Export works after complete workflow."""
+        from tuxedo.cli import (
+            _export_markdown,
+            _export_bibtex,
+            _export_csv,
+            _export_json,
+            _export_ris,
+        )
+
+        views = full_project.get_views()
+        view = views[0]
+        clusters = full_project.get_clusters(view.id)
+        papers = full_project.get_papers()
+        papers_by_id = {p.id: p for p in papers}
+
+        # Test all export formats
+        assert len(_export_markdown(view, clusters, papers_by_id)) > 0
+        assert len(_export_bibtex(view, clusters, papers_by_id, include_abstract=False)) > 0
+        assert len(_export_csv(view, clusters, papers_by_id)) > 0
+        assert len(_export_json(view, clusters, papers_by_id)) > 0
+        assert len(_export_ris(view, clusters, papers_by_id)) > 0
+
+
+class TestProjectRecovery:
+    """Tests for project state recovery."""
+
+    @pytest.fixture
+    def project_with_state(self, tmp_path):
+        """Create a project with papers, views, and clusters."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "paper.pdf").write_bytes(b"%PDF-1.4")
+
+        project = Project.create(
+            root=tmp_path / "project",
+            name="Test Project",
+            research_question="Question?",
+            source_pdfs=source_dir,
+        )
+
+        # Add papers
+        for i in range(3):
+            project.add_paper(
+                Paper(
+                    id=f"paper{i}",
+                    pdf_path=project.list_pdfs()[0],
+                    title=f"Paper {i}",
+                    authors=[Author(name=f"Author {i}")],
+                    year=2024,
+                )
+            )
+
+        # Create views and clusters
+        view1 = project.create_view("View 1", "Prompt 1")
+        view2 = project.create_view("View 2", "Prompt 2")
+
+        project.save_clusters(
+            view1.id,
+            [
+                Cluster(
+                    id="c1",
+                    name="Cluster A",
+                    description="First",
+                    paper_ids=["paper0", "paper1"],
+                    subclusters=[],
+                )
+            ],
+        )
+        project.save_clusters(
+            view2.id,
+            [
+                Cluster(
+                    id="c2",
+                    name="Cluster B",
+                    description="Second",
+                    paper_ids=["paper2"],
+                    subclusters=[],
+                )
+            ],
+        )
+
+        return tmp_path / "project"
+
+    def test_project_reloads_correctly(self, project_with_state):
+        """Project state is preserved after reload."""
+        # Load the project fresh
+        import os
+
+        original_dir = os.getcwd()
+        os.chdir(project_with_state)
+        try:
+            project = Project.load()
+        finally:
+            os.chdir(original_dir)
+
+        assert project is not None
+        assert project.paper_count() == 3
+        assert project.view_count() == 2
+
+    def test_papers_persist_after_reload(self, project_with_state):
+        """Papers are accessible after reload."""
+        import os
+
+        original_dir = os.getcwd()
+        os.chdir(project_with_state)
+        try:
+            project = Project.load()
+        finally:
+            os.chdir(original_dir)
+
+        papers = project.get_papers()
+        assert len(papers) == 3
+        titles = {p.title for p in papers}
+        assert "Paper 0" in titles
+        assert "Paper 1" in titles
+        assert "Paper 2" in titles
+
+    def test_clusters_persist_after_reload(self, project_with_state):
+        """Clusters are accessible after reload."""
+        import os
+
+        original_dir = os.getcwd()
+        os.chdir(project_with_state)
+        try:
+            project = Project.load()
+        finally:
+            os.chdir(original_dir)
+
+        views = project.get_views()
+        assert len(views) == 2
+
+        for view in views:
+            clusters = project.get_clusters(view.id)
+            assert len(clusters) >= 1
+
+
+class TestGuidedClusteringWorkflow:
+    """Test guided clustering with predefined categories."""
+
+    @pytest.fixture
+    def project_with_papers(self, tmp_path):
+        """Create project with papers."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "paper.pdf").write_bytes(b"%PDF-1.4")
+
+        project = Project.create(
+            root=tmp_path / "project",
+            name="Test",
+            research_question="Q?",
+            source_pdfs=source_dir,
+        )
+
+        papers = [
+            Paper(
+                id="p1",
+                pdf_path=project.list_pdfs()[0],
+                title="Quantitative Analysis of X",
+                authors=[Author(name="A")],
+                abstract="Using statistical methods...",
+                year=2024,
+            ),
+            Paper(
+                id="p2",
+                pdf_path=project.list_pdfs()[0],
+                title="Qualitative Study of Y",
+                authors=[Author(name="B")],
+                abstract="Interview-based study...",
+                year=2024,
+            ),
+            Paper(
+                id="p3",
+                pdf_path=project.list_pdfs()[0],
+                title="Mixed Methods Approach",
+                authors=[Author(name="C")],
+                abstract="Combining quantitative and qualitative...",
+                year=2024,
+            ),
+        ]
+        for paper in papers:
+            project.add_paper(paper)
+
+        return project
+
+    def test_guided_clustering_assigns_to_categories(self, project_with_papers):
+        """Papers are assigned to predefined categories."""
+        mock_response = Mock()
+        mock_response.choices = [
+            Mock(
+                message=Mock(
+                    content=json.dumps(
+                        {
+                            "clusters": [
+                                {
+                                    "name": "Quantitative",
+                                    "description": "Statistical analysis papers",
+                                    "paper_ids": ["p1"],
+                                },
+                                {
+                                    "name": "Qualitative",
+                                    "description": "Interview-based studies",
+                                    "paper_ids": ["p2"],
+                                },
+                                {
+                                    "name": "Mixed Methods",
+                                    "description": "Combined approaches",
+                                    "paper_ids": ["p3"],
+                                },
+                            ]
+                        }
+                    )
+                )
+            )
+        ]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusters = clusterer.cluster_papers(
+                project_with_papers.get_papers(),
+                "Research question",
+                categories=["Quantitative", "Qualitative", "Mixed Methods"],
+            )
+
+        assert len(clusters) == 3
+        names = {c.name for c in clusters}
+        assert "Quantitative" in names
+        assert "Qualitative" in names
+        assert "Mixed Methods" in names
+
+    def test_guided_strict_mode_no_new_categories(self, project_with_papers):
+        """Strict mode prevents new categories."""
+        mock_response = Mock()
+        mock_response.choices = [
+            Mock(
+                message=Mock(
+                    content=json.dumps(
+                        {
+                            "clusters": [
+                                {
+                                    "name": "Quantitative",
+                                    "description": "Papers",
+                                    "paper_ids": ["p1", "p2", "p3"],
+                                },
+                            ]
+                        }
+                    )
+                )
+            )
+        ]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusterer.cluster_papers(
+                project_with_papers.get_papers(),
+                "Research question",
+                categories=["Quantitative"],
+                allow_new_categories=False,
+            )
+
+            # Verify the strict mode instruction was used
+            call_args = mock_client.chat.completions.create.call_args
+            system_content = call_args.kwargs["messages"][0]["content"]
+            assert "Do NOT create new categories" in system_content
+
+
+class TestAutoClusteringWorkflow:
+    """Test auto-discovery clustering mode."""
+
+    @pytest.fixture
+    def project_with_papers(self, tmp_path):
+        """Create project with papers."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "paper.pdf").write_bytes(b"%PDF-1.4")
+
+        project = Project.create(
+            root=tmp_path / "project",
+            name="Test",
+            research_question="Q?",
+            source_pdfs=source_dir,
+        )
+
+        papers = [
+            Paper(
+                id=f"p{i}",
+                pdf_path=project.list_pdfs()[0],
+                title=f"Paper {i}",
+                authors=[],
+                abstract=f"Abstract {i}",
+                year=2024,
+            )
+            for i in range(5)
+        ]
+        for paper in papers:
+            project.add_paper(paper)
+
+        return project
+
+    def test_auto_discovery_uses_correct_prompt(self, project_with_papers):
+        """Auto mode uses discovery-focused prompt."""
+        mock_response = Mock()
+        mock_response.choices = [
+            Mock(
+                message=Mock(
+                    content=json.dumps(
+                        {"clusters": [{"name": "Theme", "description": "D", "paper_ids": ["p0"]}]}
+                    )
+                )
+            )
+        ]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusterer.cluster_papers(
+                project_with_papers.get_papers(), "Ignored question", auto_mode="themes"
+            )
+
+            call_args = mock_client.chat.completions.create.call_args
+            system_content = call_args.kwargs["messages"][0]["content"]
+            user_content = call_args.kwargs["messages"][1]["content"]
+
+            assert "discover" in system_content.lower()
+            assert "Discovery Focus" in user_content
+
+    def test_auto_methodology_mode(self, project_with_papers):
+        """Methodology mode uses specific focus."""
+        mock_response = Mock()
+        mock_response.choices = [Mock(message=Mock(content=json.dumps({"clusters": []})))]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusterer.cluster_papers(project_with_papers.get_papers(), "Q", auto_mode="methodology")
+
+            call_args = mock_client.chat.completions.create.call_args
+            user_content = call_args.kwargs["messages"][1]["content"]
+
+            assert "methodology" in user_content.lower()
+
+    def test_auto_custom_focus(self, project_with_papers):
+        """Custom focus string is used in prompt."""
+        mock_response = Mock()
+        mock_response.choices = [Mock(message=Mock(content=json.dumps({"clusters": []})))]
+
+        with patch("tuxedo.clustering.OpenAI") as mock_openai:
+            mock_client = Mock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_openai.return_value = mock_client
+
+            clusterer = PaperClusterer()
+            clusterer.cluster_papers(
+                project_with_papers.get_papers(), "Q", auto_mode="machine learning techniques"
+            )
+
+            call_args = mock_client.chat.completions.create.call_args
+            user_content = call_args.kwargs["messages"][1]["content"]
+
+            assert "machine learning techniques" in user_content

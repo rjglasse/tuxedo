@@ -1013,12 +1013,13 @@ class ViewSelectionScreen(Screen):
         list_view = self.query_one("#view-list", ListView)
         list_view.clear()
 
+        # New view option always at the top
+        list_view.append(NewViewItem())
+
         views = self.project.get_views()
         for view in views:
             count = self.project.cluster_count(view.id)
             list_view.append(ViewListItem(view, count))
-
-        list_view.append(NewViewItem())
 
     @on(ListView.Selected)
     def on_list_selected(self, event: ListView.Selected) -> None:

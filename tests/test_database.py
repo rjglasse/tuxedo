@@ -444,3 +444,150 @@ class TestDatabaseTransactions:
 
         # Count should be unchanged
         assert db.view_count() == initial_count
+
+
+class TestQuestionOperations:
+    """Tests for question CRUD operations."""
+
+    @pytest.fixture
+    def sample_question(self):
+        """Create a sample question."""
+        from tuxedo.models import Question
+
+        return Question(
+            id="q1",
+            text="What methodology does this paper use?",
+        )
+
+    def test_add_question(self, db, sample_question):
+        """Questions can be added."""
+        db.add_question(sample_question)
+        questions = db.get_all_questions()
+        assert len(questions) == 1
+
+    def test_get_question(self, db, sample_question):
+        """Questions can be retrieved by ID."""
+        db.add_question(sample_question)
+        question = db.get_question("q1")
+
+        assert question is not None
+        assert question.id == "q1"
+        assert question.text == "What methodology does this paper use?"
+
+    def test_get_question_not_found(self, db):
+        """Getting a non-existent question returns None."""
+        question = db.get_question("nonexistent")
+        assert question is None
+
+    def test_get_all_questions(self, db, sample_question):
+        """All questions can be retrieved."""
+        from tuxedo.models import Question
+
+        db.add_question(sample_question)
+        db.add_question(Question(id="q2", text="What are the main findings?"))
+
+        questions = db.get_all_questions()
+        assert len(questions) == 2
+
+    def test_delete_question(self, db, sample_question):
+        """Questions can be deleted."""
+        db.add_question(sample_question)
+        db.delete_question("q1")
+
+        question = db.get_question("q1")
+        assert question is None
+
+
+class TestPaperAnswerOperations:
+    """Tests for paper answer CRUD operations."""
+
+    @pytest.fixture
+    def sample_question(self):
+        """Create a sample question."""
+        from tuxedo.models import Question
+
+        return Question(
+            id="q1",
+            text="What methodology does this paper use?",
+        )
+
+    @pytest.fixture
+    def sample_answer(self):
+        """Create a sample paper answer."""
+        from tuxedo.models import PaperAnswer
+
+        return PaperAnswer(
+            id="a1",
+            question_id="q1",
+            paper_id="paper1",
+            answer="The paper uses a mixed-methods approach.",
+            sections_used=["abstract", "methodology"],
+            confidence="high",
+        )
+
+    def test_add_paper_answer(self, db, sample_paper, sample_question, sample_answer):
+        """Paper answers can be added."""
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+        db.add_paper_answer(sample_answer)
+
+        answers = db.get_answers_for_paper("paper1")
+        assert len(answers) == 1
+
+    def test_get_answers_for_paper(self, db, sample_paper, sample_question, sample_answer):
+        """Answers for a paper can be retrieved."""
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+        db.add_paper_answer(sample_answer)
+
+        answers = db.get_answers_for_paper("paper1")
+        assert len(answers) == 1
+        assert answers[0].answer == "The paper uses a mixed-methods approach."
+        assert answers[0].sections_used == ["abstract", "methodology"]
+        assert answers[0].confidence == "high"
+
+    def test_get_answers_for_question(self, db, sample_paper, sample_question, sample_answer):
+        """Answers for a question can be retrieved."""
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+        db.add_paper_answer(sample_answer)
+
+        answers = db.get_answers_for_question("q1")
+        assert len(answers) == 1
+        assert answers[0].paper_id == "paper1"
+
+    def test_delete_question_cascades_to_answers(
+        self, db, sample_paper, sample_question, sample_answer
+    ):
+        """Deleting a question also deletes its answers."""
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+        db.add_paper_answer(sample_answer)
+
+        db.delete_question("q1")
+
+        answers = db.get_answers_for_paper("paper1")
+        assert len(answers) == 0
+
+    def test_answer_replaces_existing(self, db, sample_paper, sample_question, sample_answer):
+        """Adding an answer for the same question/paper replaces the existing one."""
+        from tuxedo.models import PaperAnswer
+
+        db.add_paper(sample_paper)
+        db.add_question(sample_question)
+        db.add_paper_answer(sample_answer)
+
+        # Add a new answer for the same question/paper
+        new_answer = PaperAnswer(
+            id="a2",
+            question_id="q1",
+            paper_id="paper1",
+            answer="Updated answer.",
+            sections_used=["conclusion"],
+            confidence="medium",
+        )
+        db.add_paper_answer(new_answer)
+
+        answers = db.get_answers_for_paper("paper1")
+        assert len(answers) == 1
+        assert answers[0].answer == "Updated answer."

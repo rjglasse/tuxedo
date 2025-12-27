@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from tuxedo.database import Database
-from tuxedo.models import Cluster, ClusterView, Paper
+from tuxedo.models import Cluster, ClusterView, Paper, PaperAnswer, Question
 
 CONFIG_FILE = "tuxedo.toml"
 PAPERS_DIR = "papers"
@@ -239,3 +239,46 @@ class Project:
     ) -> None:
         """Rename a cluster and optionally update its description."""
         self.db.rename_cluster(cluster_id, new_name, new_description)
+
+    # Question methods
+
+    def create_question(self, text: str) -> Question:
+        """Create a new question."""
+        question = Question(
+            id=str(uuid.uuid4())[:8],
+            text=text,
+        )
+        self.db.add_question(question)
+        return question
+
+    def get_questions(self) -> list[Question]:
+        """Get all questions."""
+        return self.db.get_all_questions()
+
+    def get_question(self, question_id: str) -> Question | None:
+        """Get a question by ID."""
+        return self.db.get_question(question_id)
+
+    def delete_question(self, question_id: str) -> None:
+        """Delete a question and its answers."""
+        self.db.delete_question(question_id)
+
+    # Paper Answer methods
+
+    def save_answer(self, answer: PaperAnswer) -> None:
+        """Save a paper answer."""
+        self.db.add_paper_answer(answer)
+
+    def get_answers_for_paper(self, paper_id: str) -> list[PaperAnswer]:
+        """Get all answers for a paper."""
+        return self.db.get_answers_for_paper(paper_id)
+
+    def get_answers_with_questions(self, paper_id: str) -> list[tuple[Question, PaperAnswer]]:
+        """Get all answers for a paper with their questions."""
+        answers = self.db.get_answers_for_paper(paper_id)
+        result = []
+        for answer in answers:
+            question = self.db.get_question(answer.question_id)
+            if question:
+                result.append((question, answer))
+        return result

@@ -102,3 +102,23 @@ class ClusterView(BaseModel):
     name: str
     prompt: str
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+class Question(BaseModel):
+    """A question to be analyzed across papers."""
+
+    id: str
+    text: str
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class PaperAnswer(BaseModel):
+    """An answer to a question for a specific paper."""
+
+    id: str
+    question_id: str
+    paper_id: str
+    answer: str
+    sections_used: list[str] = Field(default_factory=list)
+    confidence: str | None = None  # "high", "medium", "low"
+    created_at: datetime = Field(default_factory=datetime.now)

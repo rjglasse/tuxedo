@@ -9,6 +9,8 @@ from textual.widgets import Button, Input, Label, ListView, Select
 
 from tuxedo.models import Author, Cluster, ClusterView, Paper
 from tuxedo.tui import (
+    AnalysisProgressScreen,
+    AskQuestionDialog,
     ClusteringProgressScreen,
     ConfirmDialog,
     CreateClusterDialog,
@@ -113,6 +115,7 @@ def mock_project(sample_paper, sample_clusters, sample_view):
     project.paper_count.return_value = 1
     project.get_paper.return_value = sample_paper
     project.get_pdf_path.return_value = Path("/tmp/test.pdf")
+    project.get_answers_with_questions.return_value = []
     return project
 
 
@@ -668,6 +671,104 @@ class TestCreateClusterDialog:
             await pilot.click("#create-btn")
 
         assert app.result["auto_mode"] == "methodology"
+
+
+# ============================================================================
+# AskQuestionDialog Tests
+# ============================================================================
+
+
+class TestAskQuestionDialog:
+    """Tests for the ask question dialog."""
+
+    async def test_cancel_returns_none(self):
+        """Pressing Escape returns None."""
+        dialog = AskQuestionDialog()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test() as pilot:
+            await pilot.press("escape")
+
+        assert app.result is None
+
+    async def test_empty_question_shows_warning(self):
+        """Empty question shows a warning."""
+        dialog = AskQuestionDialog()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            # Try to submit without question
+            await pilot.click("#analyze-btn")
+            # Dialog should still be open
+            await pilot.press("escape")
+
+        assert app.result is None
+
+    async def test_analyze_returns_question_and_model(self):
+        """Analyzing returns question text and model."""
+        dialog = AskQuestionDialog()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            question_input = dialog.query_one("#question-input", Input)
+            question_input.value = "What methodology does this paper use?"
+
+            await pilot.click("#analyze-btn")
+
+        assert app.result is not None
+        assert app.result["question"] == "What methodology does this paper use?"
+        assert "model" in app.result
+
+    async def test_model_selection(self):
+        """Model can be selected."""
+        dialog = AskQuestionDialog()
+        app = DialogTestApp(dialog)
+
+        async with app.run_test(size=(100, 40)) as pilot:
+            question_input = dialog.query_one("#question-input", Input)
+            question_input.value = "Test question"
+
+            model_select = dialog.query_one("#ask-model", Select)
+            model_select.value = "gpt-4o"
+
+            await pilot.click("#analyze-btn")
+
+        assert app.result["model"] == "gpt-4o"
+
+
+# ============================================================================
+# AnalysisProgressScreen Tests
+# ============================================================================
+
+
+class TestAnalysisProgressScreen:
+    """Tests for the analysis progress screen."""
+
+    async def test_displays_question(self):
+        """Screen displays the question being analyzed."""
+        screen = AnalysisProgressScreen("What is the main finding?")
+
+        class TestApp(App):
+            def on_mount(self):
+                self.push_screen(screen)
+
+        async with TestApp().run_test():
+            # Just verify it renders without error
+            assert screen.question == "What is the main finding?"
+
+    async def test_update_status(self):
+        """Status can be updated."""
+        screen = AnalysisProgressScreen("Test question")
+
+        class TestApp(App):
+            def on_mount(self):
+                self.push_screen(screen)
+
+        async with TestApp().run_test() as pilot:
+            screen.update_status("Analyzing paper 1/10")
+            await pilot.pause()
+            # Verify status was updated
+            assert screen._status == "Analyzing paper 1/10"
 
 
 # ============================================================================

@@ -258,3 +258,82 @@ class TestClusterView:
         after = datetime.now()
 
         assert before <= view.created_at <= after
+
+
+class TestQuestion:
+    """Tests for Question model."""
+
+    def test_question_creation(self):
+        """Question can be created."""
+        from tuxedo.models import Question
+
+        question = Question(
+            id="q1",
+            text="What methodology does this paper use?",
+        )
+        assert question.id == "q1"
+        assert question.text == "What methodology does this paper use?"
+
+    def test_question_default_timestamp(self):
+        """Question gets default created_at timestamp."""
+        from tuxedo.models import Question
+
+        before = datetime.now()
+        question = Question(
+            id="q1",
+            text="Test question",
+        )
+        after = datetime.now()
+
+        assert before <= question.created_at <= after
+
+
+class TestPaperAnswer:
+    """Tests for PaperAnswer model."""
+
+    def test_paper_answer_creation(self):
+        """PaperAnswer can be created."""
+        from tuxedo.models import PaperAnswer
+
+        answer = PaperAnswer(
+            id="a1",
+            question_id="q1",
+            paper_id="p1",
+            answer="The paper uses a mixed-methods approach.",
+            sections_used=["abstract", "methodology"],
+            confidence="high",
+        )
+        assert answer.id == "a1"
+        assert answer.question_id == "q1"
+        assert answer.paper_id == "p1"
+        assert answer.answer == "The paper uses a mixed-methods approach."
+        assert answer.sections_used == ["abstract", "methodology"]
+        assert answer.confidence == "high"
+
+    def test_paper_answer_optional_fields(self):
+        """PaperAnswer has correct defaults for optional fields."""
+        from tuxedo.models import PaperAnswer
+
+        answer = PaperAnswer(
+            id="a1",
+            question_id="q1",
+            paper_id="p1",
+            answer="Test answer",
+        )
+        assert answer.sections_used == []
+        assert answer.confidence is None
+
+    def test_paper_answer_default_timestamp(self):
+        """PaperAnswer gets default created_at timestamp."""
+        from tuxedo.models import PaperAnswer
+
+        before = datetime.now()
+        answer = PaperAnswer(
+            id="a1",
+            question_id="q1",
+            paper_id="p1",
+            answer="Test",
+        )
+        after = datetime.now()
+
+        assert before <= answer.created_at <= after

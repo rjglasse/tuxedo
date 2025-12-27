@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from tuxedo.models import Author, Cluster, ClusterView, Paper
+from tuxedo.models import Author, Cluster, ClusterView, Paper, PaperAnswer, Question
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
@@ -62,6 +62,28 @@ CREATE TABLE IF NOT EXISTS cluster_papers (
 CREATE INDEX IF NOT EXISTS idx_clusters_view ON clusters(view_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_parent ON clusters(parent_id);
 CREATE INDEX IF NOT EXISTS idx_cluster_papers_cluster ON cluster_papers(cluster_id);
+
+CREATE TABLE IF NOT EXISTS questions (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS paper_answers (
+    id TEXT PRIMARY KEY,
+    question_id TEXT NOT NULL,
+    paper_id TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    sections_used TEXT NOT NULL,  -- JSON array
+    confidence TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (question_id) REFERENCES questions(id),
+    FOREIGN KEY (paper_id) REFERENCES papers(id),
+    UNIQUE(question_id, paper_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_answers_question ON paper_answers(question_id);
+CREATE INDEX IF NOT EXISTS idx_paper_answers_paper ON paper_answers(paper_id);
 """
 
 # Migration to add cluster_views support
@@ -514,3 +536,102 @@ class Database:
                     "UPDATE clusters SET name = ? WHERE id = ?",
                     (new_name, cluster_id),
                 )
+
+    # Question operations
+
+    def add_question(self, question: Question) -> None:
+        """Add a question."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO questions (id, text, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (question.id, question.text, question.created_at.isoformat()),
+            )
+
+    def get_question(self, question_id: str) -> Question | None:
+        """Get a question by ID."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
+            if row:
+                return self._row_to_question(row)
+            return None
+
+    def get_all_questions(self) -> list[Question]:
+        """Get all questions."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM questions ORDER BY created_at DESC").fetchall()
+            return [self._row_to_question(row) for row in rows]
+
+    def delete_question(self, question_id: str) -> None:
+        """Delete a question and its answers."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM paper_answers WHERE question_id = ?", (question_id,))
+            conn.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+
+    def _row_to_question(self, row: sqlite3.Row) -> Question:
+        """Convert a database row to a Question model."""
+        created_at = row["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        return Question(
+            id=row["id"],
+            text=row["text"],
+            created_at=created_at,
+        )
+
+    # Paper Answer operations
+
+    def add_paper_answer(self, answer: PaperAnswer) -> None:
+        """Add or update a paper answer."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO paper_answers
+                (id, question_id, paper_id, answer, sections_used, confidence, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    answer.id,
+                    answer.question_id,
+                    answer.paper_id,
+                    answer.answer,
+                    json.dumps(answer.sections_used),
+                    answer.confidence,
+                    answer.created_at.isoformat(),
+                ),
+            )
+
+    def get_answers_for_paper(self, paper_id: str) -> list[PaperAnswer]:
+        """Get all answers for a paper."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM paper_answers WHERE paper_id = ? ORDER BY created_at DESC",
+                (paper_id,),
+            ).fetchall()
+            return [self._row_to_paper_answer(row) for row in rows]
+
+    def get_answers_for_question(self, question_id: str) -> list[PaperAnswer]:
+        """Get all answers for a question."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM paper_answers WHERE question_id = ? ORDER BY created_at DESC",
+                (question_id,),
+            ).fetchall()
+            return [self._row_to_paper_answer(row) for row in rows]
+
+    def _row_to_paper_answer(self, row: sqlite3.Row) -> PaperAnswer:
+        """Convert a database row to a PaperAnswer model."""
+        created_at = row["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        return PaperAnswer(
+            id=row["id"],
+            question_id=row["question_id"],
+            paper_id=row["paper_id"],
+            answer=row["answer"],
+            sections_used=json.loads(row["sections_used"]),
+            confidence=row["confidence"],
+            created_at=created_at,
+        )

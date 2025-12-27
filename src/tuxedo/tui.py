@@ -26,7 +26,7 @@ from textual.widgets import (
 from textual.widgets.tree import TreeNode
 
 from tuxedo.clustering import PaperClusterer
-from tuxedo.models import Cluster, ClusterView, Paper
+from tuxedo.models import Cluster, ClusterView, Paper, PaperAnswer, Question
 
 # Available models for clustering
 MODEL_OPTIONS = [
@@ -963,6 +963,162 @@ class CreateClusterDialog(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class AskQuestionDialog(ModalScreen[dict | None]):
+    """A modal dialog for asking a question about papers."""
+
+    CSS = """
+    AskQuestionDialog {
+        align: center middle;
+    }
+
+    #ask-dialog {
+        width: 80;
+        height: auto;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #ask-dialog .title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #ask-dialog .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #ask-dialog Input {
+        margin-bottom: 1;
+    }
+
+    #ask-dialog Select {
+        margin-bottom: 1;
+        width: 100%;
+    }
+
+    #ask-dialog .buttons {
+        margin-top: 1;
+    }
+
+    #ask-dialog Button {
+        margin-right: 1;
+        border: none;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ask-dialog"):
+            yield Label("Ask a Question", classes="title")
+            yield Label(
+                "Ask a question to analyze across all papers in this view",
+                classes="hint",
+            )
+            yield Input(
+                placeholder="e.g., 'What methodology does this paper use?' or 'What are the main findings?'",
+                id="question-input",
+            )
+            yield Select(
+                [(label, value) for value, label in MODEL_OPTIONS],
+                value="gpt-4o-mini",
+                id="ask-model",
+                prompt="Select model",
+            )
+            with Horizontal(classes="buttons"):
+                yield Button("Analyze", variant="primary", id="analyze-btn")
+                yield Button("Cancel", id="cancel-btn")
+
+    def on_mount(self) -> None:
+        self.query_one("#question-input", Input).focus()
+
+    @on(Button.Pressed, "#analyze-btn")
+    def on_analyze(self) -> None:
+        question = self.query_one("#question-input", Input).value.strip()
+        if not question:
+            self.notify("Please enter a question", severity="warning")
+            return
+
+        model_select = self.query_one("#ask-model", Select)
+        model = model_select.value if model_select.value != Select.BLANK else "gpt-4o-mini"
+
+        self.dismiss({"question": question, "model": model})
+
+    @on(Button.Pressed, "#cancel-btn")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
+class AnalysisProgressScreen(ModalScreen[None]):
+    """A modal screen showing analysis progress.
+
+    This screen blocks interaction while analysis is in progress,
+    displaying a loading indicator and status message.
+    """
+
+    CSS = """
+    AnalysisProgressScreen {
+        align: center middle;
+    }
+
+    #analysis-dialog {
+        width: 70;
+        height: auto;
+        background: $surface;
+        padding: 2 3;
+    }
+
+    #analysis-dialog .title {
+        text-style: bold;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    #analysis-dialog .question {
+        color: $text-muted;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    #analysis-dialog .status {
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #analysis-dialog LoadingIndicator {
+        width: 100%;
+        height: 3;
+    }
+    """
+
+    def __init__(self, question: str):
+        super().__init__()
+        self.question = question
+        self._status = "Initializing..."
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="analysis-dialog"):
+            yield Label("Analyzing Papers", classes="title")
+            question_short = (
+                self.question[:60] + "..." if len(self.question) > 60 else self.question
+            )
+            yield Label(f"Q: {question_short}", classes="question")
+            yield LoadingIndicator()
+            yield Label(self._status, classes="status", id="analysis-status")
+
+    def update_status(self, status: str) -> None:
+        """Update the status message."""
+        self._status = status
+        try:
+            label = self.query_one("#analysis-status", Label)
+            label.update(status)
+        except Exception:
+            pass  # Screen may not be fully mounted yet
+
+
 # ============================================================================
 # View Selection Screen
 # ============================================================================
@@ -1296,11 +1452,38 @@ class PaperDetail(Static):
         color: $text-muted;
         margin-top: 1;
     }
+
+    PaperDetail .qa-section {
+        margin-top: 2;
+        padding-top: 1;
+        border-top: solid $primary;
+    }
+
+    PaperDetail .qa-question {
+        color: $primary;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    PaperDetail .qa-answer {
+        color: $text;
+        margin-left: 1;
+    }
+
+    PaperDetail .qa-meta {
+        color: $text-muted;
+        margin-left: 1;
+    }
     """
 
-    def __init__(self, paper: Paper | None = None):
+    def __init__(
+        self,
+        paper: Paper | None = None,
+        qa_pairs: list[tuple[Question, PaperAnswer]] | None = None,
+    ):
         super().__init__()
         self.paper = paper
+        self.qa_pairs = qa_pairs or []
 
     def compose(self) -> ComposeResult:
         if self.paper:
@@ -1327,6 +1510,18 @@ class PaperDetail(Static):
             if self.paper.keywords:
                 keywords = ", ".join(self.paper.keywords[:10])
                 yield Static(f"Keywords: {keywords}", classes="keywords")
+
+            # Q&A Section
+            if self.qa_pairs:
+                yield Static("", classes="qa-section")
+                yield Static("Questions & Answers", classes="section-header")
+                for question, answer in self.qa_pairs:
+                    yield Static(f"Q: {question.text}", classes="qa-question")
+                    yield Static(f"A: {answer.answer}", classes="qa-answer")
+                    if answer.sections_used:
+                        sections = ", ".join(answer.sections_used)
+                        confidence = f" | {answer.confidence}" if answer.confidence else ""
+                        yield Static(f"(from: {sections}{confidence})", classes="qa-meta")
         else:
             yield Static("Select a paper to view details", classes="meta")
 
@@ -1637,6 +1832,7 @@ class ClusterScreen(Screen):
         d: Delete paper from project
         r: Rename the selected cluster
         R: Recluster papers with feedback
+        a: Ask a question about all papers
         x: Export view to file or clipboard
         e: Expand all tree nodes
         c: Collapse all tree nodes
@@ -1653,6 +1849,7 @@ class ClusterScreen(Screen):
         Binding("d", "delete_paper", "Delete"),
         Binding("r", "rename_cluster", "Rename"),
         Binding("R", "recluster", "Recluster"),
+        Binding("a", "ask_question", "Ask Q"),
         Binding("x", "export", "Export"),
         Binding("/", "search", "Search", priority=True),
         Binding("escape", "clear_search", "Clear", show=False),
@@ -1719,6 +1916,7 @@ class ClusterScreen(Screen):
         self._tree: ClusterTree | None = None
         self._detail: Container | None = None
         self._filter_text = ""
+        self._analysis_progress: AnalysisProgressScreen | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -1751,7 +1949,9 @@ class ClusterScreen(Screen):
             # Check if a paper is selected
             paper = self._tree.get_selected_paper()
             if paper:
-                self._detail.mount(PaperDetail(paper))
+                # Load Q&A pairs for this paper
+                qa_pairs = self.project.get_answers_with_questions(paper.id)
+                self._detail.mount(PaperDetail(paper, qa_pairs))
                 return
 
             # Check if a cluster is selected
@@ -2014,6 +2214,90 @@ class ClusterScreen(Screen):
             self.app.call_from_thread(self.notify, f"Reclustered into {len(new_clusters)} clusters")
         except Exception as e:
             self.app.call_from_thread(self.notify, f"Recluster failed: {e}", severity="error")
+
+    def action_ask_question(self) -> None:
+        """Ask a question to analyze across all papers."""
+        if not self.papers:
+            self.notify("No papers to analyze", severity="warning")
+            return
+
+        def handle_question(result: dict | None) -> None:
+            if result:
+                question_text = result["question"]
+                model = result["model"]
+
+                # Show progress screen
+                self._analysis_progress = AnalysisProgressScreen(question_text)
+                self.app.push_screen(self._analysis_progress)
+
+                # Start analysis in background
+                self._analyze_papers(question_text, model)
+
+        self.app.push_screen(AskQuestionDialog(), handle_question)
+
+    def _update_analysis_progress(self, status: str) -> None:
+        """Update the analysis progress screen status from background thread."""
+        if self._analysis_progress:
+            self.app.call_from_thread(self._analysis_progress.update_status, status)
+
+    def _dismiss_analysis_progress(self) -> None:
+        """Dismiss the analysis progress screen from background thread."""
+        if self._analysis_progress:
+            self.app.call_from_thread(self.app.pop_screen)
+            self._analysis_progress = None
+
+    @work(thread=True)
+    def _analyze_papers(self, question_text: str, model: str) -> None:
+        """Analyze all papers to answer a question."""
+        from tuxedo.analysis import PaperAnalyzer
+
+        try:
+            self._update_analysis_progress("Creating question...")
+
+            # Create the question
+            question = self.project.create_question(question_text)
+
+            self._update_analysis_progress(f"Initializing {model}...")
+
+            # Create analyzer
+            analyzer = PaperAnalyzer(model=model)
+
+            # Progress callback
+            def progress_callback(current: int, total: int, message: str) -> None:
+                self._update_analysis_progress(message)
+
+            # Analyze all papers
+            answers = analyzer.analyze_papers(
+                papers=self.papers,
+                question=question_text,
+                question_id=question.id,
+                progress_callback=progress_callback,
+            )
+
+            # Save answers
+            self._update_analysis_progress("Saving answers...")
+            for answer in answers:
+                self.project.save_answer(answer)
+
+            self._dismiss_analysis_progress()
+
+            # Refresh detail view if a paper is selected
+            def refresh_detail() -> None:
+                if self._tree and self._detail:
+                    paper = self._tree.get_selected_paper()
+                    if paper:
+                        qa_pairs = self.project.get_answers_with_questions(paper.id)
+                        self._detail.remove_children()
+                        self._detail.mount(PaperDetail(paper, qa_pairs))
+
+            self.app.call_from_thread(refresh_detail)
+            self.app.call_from_thread(
+                self.notify, f"Analyzed {len(answers)} papers for your question"
+            )
+
+        except Exception as e:
+            self._dismiss_analysis_progress()
+            self.app.call_from_thread(self.notify, f"Analysis failed: {e}", severity="error")
 
     def action_rename_cluster(self) -> None:
         """Rename the selected cluster."""

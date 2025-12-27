@@ -1894,6 +1894,12 @@ class TuxedoApp(App):
     TITLE = "Tuxedo"
     dark = True  # Always use dark mode
 
+    DEFAULT_CSS = """
+    Button {
+        border: none;
+    }
+    """
+
     def __init__(self, project: Project):
         super().__init__()
         self.project = project

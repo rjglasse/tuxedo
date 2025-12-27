@@ -566,13 +566,10 @@ def cluster(
                 allow_new_categories=not strict,
             )
 
-    # Save clusters and update paper relevance scores (keep highest)
+    # Save clusters and update paper relevance scores
     project.save_clusters(view.id, clusters)
-    papers_by_id = {p.id: p for p in papers}
     for paper_id, score in relevance_scores.items():
-        paper = papers_by_id.get(paper_id)
-        if paper and (paper.relevance_score is None or score > paper.relevance_score):
-            project.update_paper(paper_id, {"relevance_score": score})
+        project.update_paper(paper_id, {"relevance_score": score})
 
     # Display summary
     console.print(f"\n[green]Created view '{name}' with {len(clusters)} clusters[/green]\n")

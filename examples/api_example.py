@@ -160,11 +160,13 @@ def main():
     
     # Access questions and answers
     # questions = project.get_questions()
-    # for question in questions:
-    #     answers = project.get_answers_with_questions(paper_id)
-    #     print(f"Q: {question.text}")
-    #     for q, answer in answers:
-    #         print(f"  A: {answer.answer}")
+    # for paper in papers:
+    #     answers = project.get_answers_with_questions(paper.id)
+    #     if answers:
+    #         print(f"Paper: {paper.title}")
+    #         for question, answer in answers:
+    #             print(f"  Q: {question.text}")
+    #             print(f"  A: {answer.answer}")
     
     print("✓ Full programmatic access to:")
     print("  - Papers with metadata")

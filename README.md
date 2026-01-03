@@ -1,8 +1,10 @@
 # Tuxedo
 
-A simple app for organizing systematic literature review papers using LLMs.
+A Python library and app for organizing systematic literature review papers using LLMs.
 
 <img width="1904" height="824" alt="Screenshot 2025-12-26 at 00 27 37" src="https://github.com/user-attachments/assets/11bfd720-88f2-4d35-bcae-c249accdc6ed" />
+
+Tuxedo provides both a **command-line interface** for interactive work and a **Python API** for programmatic access.
 
 ## How it works
 
@@ -34,6 +36,114 @@ uv run tuxedo init ~/papers -q "What are the effects of X on Y?"
 uv run tuxedo process
 uv run tuxedo cluster
 uv run tuxedo view
+```
+
+## Python API
+
+Tuxedo can also be used as a Python library for programmatic access to all functionality:
+
+```python
+from pathlib import Path
+from tuxedo import Project, PaperClusterer, PaperAnalyzer, GrobidClient
+
+# Create a new project
+project = Project.create(
+    root=Path("my_review"),
+    name="My Literature Review",
+    research_question="What are the trends in machine learning?",
+    source_pdfs=Path("~/papers"),
+)
+
+# Process PDFs using Grobid
+with GrobidClient("http://localhost:8070") as client:
+    for pdf in project.list_pdfs():
+        result = client.process_pdf_with_result(pdf)
+        if result.success:
+            project.add_paper(result.paper)
+
+# Cluster papers
+papers = project.get_papers()
+clusterer = PaperClusterer(model="gpt-4o")
+clusters, relevance_scores = clusterer.cluster_papers(
+    papers=papers,
+    research_question="What are the trends in machine learning?",
+)
+
+# Save clustering to a view
+view = project.create_view(name="Main View", prompt="ML trends")
+project.save_clusters(view.id, clusters)
+
+# Update relevance scores
+for paper_id, score in relevance_scores.items():
+    project.update_paper(paper_id, {"relevance_score": score})
+
+# Analyze papers with questions
+analyzer = PaperAnalyzer(model="gpt-4o-mini")
+question = project.create_question("What methodology does this paper use?")
+
+answers = analyzer.analyze_papers(
+    papers=papers,
+    question=question.text,
+    question_id=question.id,
+)
+
+for answer in answers:
+    project.save_answer(answer)
+
+# Load an existing project
+project = Project.load(Path("my_review"))
+
+# Get papers and clusters
+papers = project.get_papers()
+views = project.get_views()
+clusters = project.get_clusters(views[0].id)
+
+# Export to BibTeX
+from tuxedo.cli import _export_bibtex
+papers_by_id = {p.id: p for p in papers}
+bibtex = _export_bibtex(views[0], clusters, papers_by_id)
+Path("references.bib").write_text(bibtex)
+```
+
+### API Reference
+
+#### Project Management
+
+- **`Project.create(root, name, research_question, source_pdfs)`** - Create a new project
+- **`Project.load(root=None)`** - Load existing project from current directory or specified path
+- **`project.add_paper(paper)`** - Add a paper to the project
+- **`project.get_papers()`** - Get all papers in the project
+- **`project.create_view(name, prompt)`** - Create a new clustering view
+- **`project.get_views()`** - Get all clustering views
+- **`project.get_clusters(view_id)`** - Get clusters for a view
+- **`project.save_clusters(view_id, clusters)`** - Save clusters to a view
+
+#### Paper Processing
+
+- **`GrobidClient(url)`** - Connect to Grobid service for PDF extraction
+- **`client.process_pdf(pdf_path)`** - Extract metadata from a PDF
+- **`client.process_pdf_with_result(pdf_path, max_retries=2)`** - Process with retry logic
+
+#### Clustering
+
+- **`PaperClusterer(model="gpt-4o")`** - Create a paper clusterer
+- **`clusterer.cluster_papers(papers, research_question, ...)`** - Cluster papers by themes
+- **`clusterer.recluster(papers, research_question, feedback, current_clusters)`** - Re-cluster with feedback
+
+#### Analysis
+
+- **`PaperAnalyzer(model="gpt-4o-mini")`** - Create a paper analyzer
+- **`analyzer.analyze_papers(papers, question, question_id)`** - Answer a question for each paper
+- **`analyzer.analyze_paper(paper, question)`** - Answer a question for a single paper
+
+See the source code for complete API documentation and additional options.
+
+### Complete Example
+
+A complete working example is available in [`examples/api_example.py`](examples/api_example.py). Run it to see all the API features:
+
+```bash
+python3 examples/api_example.py
 ```
 
 ## Parallel Processing
